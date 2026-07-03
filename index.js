@@ -129,7 +129,43 @@ app.post("/api/verify-payment", (req, res) => {
     if (expected !== razorpay_signature) {
       return res.status(400).json({ ok: false, error: "Invalid signature" });
     }
+    // Meta (Facebook) Conversions API - Dual Pixel Prepaid Tracking
+        try {
+            const fbAccessToken = process.env.FB_ACCESS_TOKEN;
+            // Dono Pixels ki array (West ka original ID yahan replace kar lijiye)
+            const pixelIds = ["1609839080107013", "860862546423818"]; 
 
+            if (fbAccessToken && razorpay_order_id) {
+                // Yeh loop dono pixels par baari-baari event bhejega
+                pixelIds.forEach(pixelId => {
+                    fetch(`https://graph.facebook.com/v19.0/${pixelId}/events`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            data: [{
+                                event_name: 'Purchase',
+                                event_time: Math.floor(Date.now() / 1000),
+                                event_id: razorpay_order_id, 
+                                action_source: 'website',
+                                user_data: {
+                                    client_user_agent: req.headers['user-agent'],
+                                    client_ip_address: req.ip
+                                },
+                                custom_data: {
+                                    currency: 'INR',
+                                    value: Number(req.body.amount || 0) / 100 
+                                }
+                            }],
+                            access_token: fbAccessToken
+                        })
+                    }).catch(err => console.error(`FB Fetch Error for Pixel ${pixelId}:`, err));
+                });
+                console.log("Meta Online Purchase Event Processed for both Pixels, ID:", razorpay_order_id);
+            }
+        } catch (metaErr) {
+            console.error("Meta Event Error:", metaErr);
+        }
+        
     return res.json({ ok: true });
   } catch (err) {
     console.error("Razorpay verify-payment error", err);
@@ -170,6 +206,40 @@ app.post("/api/payment-events/log", async (req, res) => {
       reason,
       meta,
     });
+    // Meta (Facebook) Conversions API - Dual Pixel COD Tracking
+    if (body.provider === 'cod' && status === 'success') {
+        try {
+            const fbAccessToken = process.env.FB_ACCESS_TOKEN;
+            const pixelIds = ["1609839080107013", "860862546423818"]; 
+
+            pixelIds.forEach(pixelId => {
+                fetch(`https://graph.facebook.com/v19.0/${pixelId}/events`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        data: [{
+                            event_name: 'Purchase',
+                            event_time: Math.floor(Date.now() / 1000),
+                            event_id: razorpayOrderId || String(body.userId + Date.now()), 
+                            action_source: 'website',
+                            user_data: {
+                                client_user_agent: req.headers['user-agent'],
+                                client_ip_address: req.ip
+                            },
+                            custom_data: {
+                                currency: 'INR',
+                                value: Number(amount || 0)
+                            }
+                        }],
+                        access_token: fbAccessToken
+                    })
+                }).catch(err => console.error(`FB COD Fetch Error for Pixel ${pixelId}:`, err));
+            });
+            console.log("Meta COD Purchase Event Processed for both Pixels!");
+        } catch (codFbErr) {
+            console.error("COD Meta Error:", codFbErr);
+        }
+    }
 
     return res.status(201).json({ ok: true, item: doc.toObject() });
   } catch (err) {
