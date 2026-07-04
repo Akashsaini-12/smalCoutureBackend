@@ -129,7 +129,43 @@ app.post("/api/verify-payment", (req, res) => {
     if (expected !== razorpay_signature) {
       return res.status(400).json({ ok: false, error: "Invalid signature" });
     }
+    // Meta (Facebook) Conversions API - Dual Pixel Prepaid Tracking
+        try {
+            const fbAccessToken = process.env.FB_ACCESS_TOKEN;
+            // Dono Pixels ki array (West ka original ID yahan replace kar lijiye)
+            const pixelIds = ["1609839080107013", "860862546423818"]; 
 
+            if (fbAccessToken && razorpay_order_id) {
+                // Yeh loop dono pixels par baari-baari event bhejega
+                pixelIds.forEach(pixelId => {
+                    fetch(`https://graph.facebook.com/v19.0/${pixelId}/events`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            data: [{
+                                event_name: 'Purchase',
+                                event_time: Math.floor(Date.now() / 1000),
+                                event_id: razorpay_order_id, 
+                                action_source: 'website',
+                                user_data: {
+                                    client_user_agent: req.headers['user-agent'],
+                                    client_ip_address: req.ip
+                                },
+                                custom_data: {
+                                    currency: 'INR',
+                                    value: Number(req.body.amount || 0) / 100 
+                                }
+                            }],
+                            access_token: fbAccessToken
+                        })
+                    }).catch(err => console.error(`FB Fetch Error for Pixel ${pixelId}:`, err));
+                });
+                console.log("Meta Online Purchase Event Processed for both Pixels, ID:", razorpay_order_id);
+            }
+        } catch (metaErr) {
+            console.error("Meta Event Error:", metaErr);
+        }
+        
     return res.json({ ok: true });
   } catch (err) {
     console.error("Razorpay verify-payment error", err);
@@ -170,6 +206,40 @@ app.post("/api/payment-events/log", async (req, res) => {
       reason,
       meta,
     });
+    // Meta (Facebook) Conversions API - Dual Pixel COD Tracking
+    if (body.provider === 'cod' && status === 'success') {
+        try {
+            const fbAccessToken = process.env.FB_ACCESS_TOKEN;
+            const pixelIds = ["1609839080107013", "860862546423818"]; 
+
+            pixelIds.forEach(pixelId => {
+                fetch(`https://graph.facebook.com/v19.0/${pixelId}/events`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        data: [{
+                            event_name: 'Purchase',
+                            event_time: Math.floor(Date.now() / 1000),
+                            event_id: razorpayOrderId || String(body.userId + Date.now()), 
+                            action_source: 'website',
+                            user_data: {
+                                client_user_agent: req.headers['user-agent'],
+                                client_ip_address: req.ip
+                            },
+                            custom_data: {
+                                currency: 'INR',
+                                value: Number(amount || 0)
+                            }
+                        }],
+                        access_token: fbAccessToken
+                    })
+                }).catch(err => console.error(`FB COD Fetch Error for Pixel ${pixelId}:`, err));
+            });
+            console.log("Meta COD Purchase Event Processed for both Pixels!");
+        } catch (codFbErr) {
+            console.error("COD Meta Error:", codFbErr);
+        }
+    }
 
     return res.status(201).json({ ok: true, item: doc.toObject() });
   } catch (err) {
@@ -2704,6 +2774,15 @@ const couponSchema = new mongoose.Schema(
     maxDiscount: { type: Number, default: 0, min: 0 }, // only for percent (0 = no cap)
     isActive: { type: Boolean, default: true },
     expiresAt: { type: Date },
+    applicableOn: { 
+            type: String, 
+            enum: ["all", "prepaid", "cod"], 
+            default: "all" 
+        },
+        applicableCategories: [{
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Category'
+        }],
   },
   { timestamps: true },
 );
@@ -3726,7 +3805,8 @@ app.post("/api/addresses/delete", async (req, res) => {
 // POST /api/coupons/validate Body: { code, subtotal, userId? }
 app.post("/api/coupons/validate", async (req, res) => {
   try {
-    const { code, subtotal, userId } = req.body || {};
+    const { code, subtotal, userId, paymentMethod, cartItems } = req.body || {};
+        
     const c = String(code || "").trim().toUpperCase();
     const sub = Number(subtotal || 0);
     if (!c) return res.status(400).json({ error: "code is required" });
@@ -3750,6 +3830,27 @@ app.post("/api/coupons/validate", async (req, res) => {
     }
 
     let discount = 0;
+    // Payment method restriction check
+        if (coupon.applicableOn && coupon.applicableOn !== 'all' && paymentMethod) {
+            if (coupon.applicableOn === 'prepaid' && paymentMethod.toLowerCase() === 'cod') {
+                return res.status(400).json({ error: "This coupon is only applicable on Prepaid orders." });
+            }
+            if (coupon.applicableOn === 'cod' && paymentMethod.toLowerCase() !== 'cod') {
+                return res.status(400).json({ error: "This coupon is only applicable on COD orders." });
+            }
+        }
+        // Category restriction check
+        if (coupon.applicableCategories && coupon.applicableCategories.length > 0 && cartItems && cartItems.length > 0) {
+            const hasValidCategoryProduct = cartItems.some(item => 
+                item.product && coupon.applicableCategories.some(catId => 
+                    String(item.product.category) === String(catId)
+                )
+            );
+
+            if (!hasValidCategoryProduct) {
+                return res.status(400).json({ error: "This coupon is not applicable to the items in your cart." });
+            }
+        }
     if (coupon.type === "flat") {
       discount = Number(coupon.value || 0);
     } else {
