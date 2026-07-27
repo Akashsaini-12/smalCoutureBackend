@@ -3760,27 +3760,25 @@ app.post("/api/coupons/validate", async (req, res) => {
     }
 
     let discount = 0;
-    // Payment method restriction check
-        if (coupon.applicableOn && coupon.applicableOn !== 'all' && paymentMethod) {
-            if (coupon.applicableOn === 'prepaid' && paymentMethod.toLowerCase() === 'cod') {
-                return res.status(400).json({ error: "This coupon is only applicable on Prepaid orders." });
-            }
-            if (coupon.applicableOn === 'cod' && paymentMethod.toLowerCase() !== 'cod') {
-                return res.status(400).json({ error: "This coupon is only applicable on COD orders." });
-            }
-        }
-        // Category restriction check
-        if (coupon.applicableCategories && coupon.applicableCategories.length > 0 && cartItems && cartItems.length > 0) {
-            const hasValidCategoryProduct = cartItems.some(item => 
-                item.product && coupon.applicableCategories.some(catId => 
-                    String(item.product.category) === String(catId)
-                )
-            );
+    // Payment method restriction check (Case-insensitive & Safe)
+if (coupon.applicableOn && coupon.applicableOn.toLowerCase() !== "all") {
+  const currentPM = String(paymentMethod || "").trim().toLowerCase();
+  const allowedPM = String(coupon.applicableOn).trim().toLowerCase();
 
-            if (!hasValidCategoryProduct) {
-                return res.status(400).json({ error: "This coupon is not applicable to the items in your cart." });
-            }
-        }
+  // Agar coupon Prepaid ke liye hai aur user COD chun raha hai
+  if (allowedPM === "prepaid" && currentPM === "cod") {
+    return res.status(400).json({ 
+      error: "This coupon is only applicable on Prepaid orders." 
+    });
+  }
+
+  // Agar coupon COD ke liye hai aur user Prepaid chun raha hai
+  if (allowedPM === "cod" && currentPM !== "cod") {
+    return res.status(400).json({ 
+      error: "This coupon is only applicable on COD orders." 
+    });
+  }
+}
     if (coupon.type === "flat") {
       discount = Number(coupon.value || 0);
     } else {
