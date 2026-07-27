@@ -3760,6 +3760,27 @@ app.post("/api/coupons/validate", async (req, res) => {
     }
 
     let discount = 0;
+    // DEBUG LOG - Check exactly what Backend receives
+console.log("--> COUPON CODE:", coupon?.code);
+console.log("--> COUPON APPLICABLE ON (DB):", coupon?.applicableOn);
+console.log("--> RECEIVED PAYMENT METHOD (REQ):", paymentMethod);
+
+// FORCE CHECK: Clean comparison
+const pm = String(paymentMethod || "").trim().toLowerCase();
+const appOn = String(coupon?.applicableOn || "all").trim().toLowerCase();
+
+// Hard check for COD restriction
+if (appOn === "prepaid" && pm === "cod") {
+  return res.status(400).json({ 
+    error: "This coupon is only applicable on Prepaid orders." 
+  });
+}
+
+if (appOn === "cod" && pm !== "cod") {
+  return res.status(400).json({ 
+    error: "This coupon is only applicable on COD orders." 
+  });
+}
     // Payment method restriction check (Case-insensitive & Safe)
 if (coupon.applicableOn && coupon.applicableOn.toLowerCase() !== "all") {
   const currentPM = String(paymentMethod || "").trim().toLowerCase();
