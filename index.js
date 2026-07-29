@@ -2704,15 +2704,6 @@ const couponSchema = new mongoose.Schema(
     maxDiscount: { type: Number, default: 0, min: 0 }, // only for percent (0 = no cap)
     isActive: { type: Boolean, default: true },
     expiresAt: { type: Date },
-    applicableOn: { 
-            type: String, 
-            enum: ["all", "prepaid", "cod"], 
-            default: "all" 
-        },
-        applicableCategories: [{
-            type: mongoose.Schema.Types.ObjectId,
-            ref: 'Category'
-        }],
   },
   { timestamps: true },
 );
@@ -3735,8 +3726,7 @@ app.post("/api/addresses/delete", async (req, res) => {
 // POST /api/coupons/validate Body: { code, subtotal, userId? }
 app.post("/api/coupons/validate", async (req, res) => {
   try {
-    const { code, subtotal, userId, paymentMethod, cartItems } = req.body || {};
-        
+    const { code, subtotal, userId } = req.body || {};
     const c = String(code || "").trim().toUpperCase();
     const sub = Number(subtotal || 0);
     if (!c) return res.status(400).json({ error: "code is required" });
@@ -3760,47 +3750,6 @@ app.post("/api/coupons/validate", async (req, res) => {
     }
 
     let discount = 0;
-    // DEBUG LOG - Check exactly what Backend receives
-console.log("--> COUPON CODE:", coupon?.code);
-console.log("--> COUPON APPLICABLE ON (DB):", coupon?.applicableOn);
-console.log("--> RECEIVED PAYMENT METHOD (REQ):", paymentMethod);
-console.log("RAW paymentMethod:", JSON.stringify(req.body.paymentMethod), typeof req.body.paymentMethod);
-
-// FORCE CHECK: Clean comparison
-const pm = String(paymentMethod || "").trim().toLowerCase();
-const appOn = String(coupon?.applicableOn || "all").trim().toLowerCase();
-
-// Hard check for COD restriction
-if (appOn === "prepaid" && pm === "cod") {
-  return res.status(400).json({ 
-    error: "This coupon is only applicable on Prepaid orders." 
-  });
-}
-
-if (appOn === "cod" && pm !== "cod") {
-  return res.status(400).json({ 
-    error: "This coupon is only applicable on COD orders." 
-  });
-}
-    // Payment method restriction check (Case-insensitive & Safe)
-if (coupon.applicableOn && coupon.applicableOn.toLowerCase() !== "all") {
-  const currentPM = String(paymentMethod || "").trim().toLowerCase();
-  const allowedPM = String(coupon.applicableOn).trim().toLowerCase();
-
-  // Agar coupon Prepaid ke liye hai aur user COD chun raha hai
-  if (allowedPM === "prepaid" && currentPM === "cod") {
-    return res.status(400).json({ 
-      error: "This coupon is only applicable on Prepaid orders." 
-    });
-  }
-
-  // Agar coupon COD ke liye hai aur user Prepaid chun raha hai
-  if (allowedPM === "cod" && currentPM !== "cod") {
-    return res.status(400).json({ 
-      error: "This coupon is only applicable on COD orders." 
-    });
-  }
-}
     if (coupon.type === "flat") {
       discount = Number(coupon.value || 0);
     } else {
