@@ -3764,6 +3764,7 @@ app.post("/api/coupons/validate", async (req, res) => {
 console.log("--> COUPON CODE:", coupon?.code);
 console.log("--> COUPON APPLICABLE ON (DB):", coupon?.applicableOn);
 console.log("--> RECEIVED PAYMENT METHOD (REQ):", paymentMethod);
+console.log("RAW paymentMethod:", JSON.stringify(req.body.paymentMethod), typeof req.body.paymentMethod);
 
 // FORCE CHECK: Clean comparison
 const pm = String(paymentMethod || "").trim().toLowerCase();
