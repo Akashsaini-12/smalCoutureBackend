@@ -2916,6 +2916,12 @@ const couponSchema = new mongoose.Schema(
     minSubtotal: { type: Number, default: 0, min: 0 },
     maxDiscount: { type: Number, default: 0, min: 0 }, // only for percent (0 = no cap)
     isActive: { type: Boolean, default: true },
+    applicableOn: {
+      type: String,
+      enum: ["all", "prepaid", "cod"],
+      default: "all",
+    },
+    applicableCategories: [{ type: String, trim: true }],
     expiresAt: { type: Date },
   },
   { timestamps: true },
@@ -4247,6 +4253,8 @@ app.post("/api/admin/coupons/create", async (req, res) => {
       minSubtotal = 0,
       maxDiscount = 0,
       isActive = true,
+      applicableOn,
+      applicableCategories,
       expiresAt,
     } = req.body || {};
 
@@ -4262,6 +4270,9 @@ app.post("/api/admin/coupons/create", async (req, res) => {
       return res.status(400).json({ error: "value must be > 0" });
     }
 
+    const allowedModes = ["all", "prepaid", "cod"];
+    const appOn = allowedModes.includes(applicableOn) ? applicableOn : "all";
+
     const couponDoc = await Coupon.create({
       code: c,
       type,
@@ -4269,6 +4280,8 @@ app.post("/api/admin/coupons/create", async (req, res) => {
       minSubtotal: Math.max(0, Number(minSubtotal) || 0),
       maxDiscount: Math.max(0, Number(maxDiscount) || 0),
       isActive: Boolean(isActive),
+      applicableOn: appOn,
+      applicableCategories: applicableCategories || [],
       expiresAt: expiresAt ? new Date(expiresAt) : undefined,
     });
 
