@@ -4114,6 +4114,54 @@ app.post("/api/coupons", async (req, res) => {
   }
 });
 
+// Coupons: list available (for checkout UI suggestions)
+// POST /api/coupons/list Body: { limit?, userId? }
+app.post("/api/coupons/list", async (req, res) => {
+  try {
+    const { limit = 12, userId } = req.body || {};
+    const limitNum = Math.max(parseInt(limit, 10) || 12, 1);
+
+    const now = new Date();
+    let excludeCodes = [];
+    if (userId) {
+      excludeCodes = await CouponRedemption.distinct("code", {
+        userId: String(userId),
+      });
+    }
+
+    const query = {
+      isActive: true,
+      $or: [
+        { expiresAt: { $exists: false } },
+        { expiresAt: null },
+        { expiresAt: { $gte: now } },
+      ],
+      ...(excludeCodes.length ? { code: { $nin: excludeCodes } } : {}),
+    };
+
+    const items = await Coupon.find(query)
+      .sort({ createdAt: -1 })
+      .limit(limitNum)
+      .lean();
+
+    const safe = items.map((c) => ({
+      _id: c._id,
+      code: c.code,
+      type: c.type,
+      value: c.value,
+      minSubtotal: c.minSubtotal || 0,
+      maxDiscount: c.maxDiscount || 0,
+      applicableOn: c.applicableOn || "all",
+      expiresAt: c.expiresAt || null,
+    }));
+
+    return res.json({ items: safe });
+  } catch (err) {
+    console.error("Error listing coupons", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // Orders: list
 // POST /api/orders/list Body: { userId }
 app.post("/api/orders/list", async (req, res) => {
