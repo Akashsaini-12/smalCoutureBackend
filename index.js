@@ -10,10 +10,102 @@ const crypto = require("crypto");
 const fs = require("fs");
 const multer = require("multer");
 const Razorpay = require("razorpay");
+const axios = require("axios");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+function sendMetaCapiEvent(payload) {
+  const accessToken = String(process.env.META_ACCESS_TOKEN || "").trim();
+  const pixelId = String(process.env.META_PIXEL_ID || "").trim();
+
+  if (!accessToken || !pixelId) {
+    return Promise.resolve({
+      ok: false,
+      error: "META_ACCESS_TOKEN and META_PIXEL_ID must be configured",
+    });
+  }
+
+  const apiUrl = `https://graph.facebook.com/${process.env.META_API_VERSION || "v20.0"}/${pixelId}/events`;
+
+  return axios
+    .post(apiUrl, { data: [payload] }, {
+      params: { access_token: accessToken },
+      headers: { "Content-Type": "application/json" },
+      timeout: 15000,
+    })
+    .then((response) => ({
+      ok: response?.status >= 200 && response?.status < 300,
+      status: response?.status,
+      data: response?.data,
+    }))
+    .catch((error) => ({
+      ok: false,
+      status: error?.response?.status || 500,
+      error: error?.response?.data || error?.message || "Meta CAPI request failed",
+    }));
+}
+
+app.post("/api/meta/capi", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const eventName = String(body.event_name || body.eventName || "").trim();
+    const eventId = String(body.event_id || body.eventId || "").trim();
+
+    if (!eventName || !eventId) {
+      return res.status(400).json({
+        ok: false,
+        error: "event_name and event_id are required",
+      });
+    }
+
+    const customData = body.custom_data || body.customData || {};
+    if (eventName.toLowerCase() === "purchase") {
+      const orderId = String(customData.order_id || "").trim();
+      if (!orderId) {
+        return res.status(400).json({
+          ok: false,
+          error: "Purchase events require a valid order_id in custom_data",
+        });
+      }
+    }
+
+    const payload = {
+      event_name: eventName,
+      event_time: Number(body.event_time || Math.floor(Date.now() / 1000)),
+      event_id: eventId,
+      action_source: String(body.action_source || "website").trim() || "website",
+      event_source_url: String(body.event_source_url || "").trim(),
+      custom_data: customData,
+      user_data: body.user_data || body.userData || {
+        em: [],
+        ph: [],
+        fn: [],
+        ln: [],
+        ge: [],
+        db: [],
+        ct: [],
+        st: [],
+        zp: [],
+        country: [],
+      },
+    };
+
+    const result = await sendMetaCapiEvent(payload);
+    if (!result.ok) {
+      return res.status(result.status || 500).json({
+        ok: false,
+        error: result.error,
+      });
+    }
+
+    return res.json({ ok: true, result });
+  } catch (err) {
+    console.error("Meta CAPI error", err);
+    return res.status(500).json({ ok: false, error: "Meta CAPI failed" });
+  }
+});
 
 // Health/ping endpoint to confirm API hits
 app.get("/api/ping", (req, res) => {
