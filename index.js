@@ -476,10 +476,6 @@ app.post("/api/auth/register", async (req, res) => {
 
     const hash = await bcrypt.hash(String(password), 10);
 
-    // Generate 6-digit OTP
-    const otp = String(Math.floor(100000 + Math.random() * 900000));
-    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 min
-
     const user = await User.create({
       firstName: String(firstName).trim(),
       lastName: lastName ? String(lastName).trim() : "",
@@ -487,17 +483,30 @@ app.post("/api/auth/register", async (req, res) => {
       phone: phone ? String(phone).trim() : "",
       passwordHash: hash,
       role: 1,
-      isVerified: false,
-      otp,
-      otpExpiry,
+      isVerified: true,
+      otp: "",
+      otpExpiry: undefined,
     });
 
-    await sendOtpEmail(user.email, otp, user.firstName);
+    const token = jwt.sign(
+      { userId: String(user._id), email: user.email, role: user.role },
+      JWT_SECRET,
+      { expiresIn: JWT_EXPIRES }
+    );
 
     return res.status(201).json({
-      message: "Registered successfully. OTP sent to your email.",
-      userId: user._id,
-      email: user.email,
+      message: "Registered successfully.",
+      token,
+      user: {
+        _id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        phone: user.phone,
+        avatarUrl: user.avatarUrl || "",
+        role: user.role,
+        isVerified: user.isVerified,
+      },
     });
   } catch (err) {
     if (err && err.code === 11000) {
@@ -615,17 +624,10 @@ app.post("/api/auth/login", async (req, res) => {
     if (!match) return res.status(401).json({ error: "Invalid credentials" });
 
     if (!user.isVerified) {
-      // Resend OTP silently
-      const otp = String(Math.floor(100000 + Math.random() * 900000));
-      user.otp = otp;
-      user.otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
+      user.isVerified = true;
+      user.otp = "";
+      user.otpExpiry = undefined;
       await user.save();
-      await sendOtpEmail(user.email, otp, user.firstName);
-      return res.status(403).json({
-        error: "Account not verified. OTP resent to your email.",
-        needsVerification: true,
-        email: user.email,
-      });
     }
 
     const token = jwt.sign(
