@@ -2705,7 +2705,6 @@ const couponSchema = new mongoose.Schema(
     minSubtotal: { type: Number, default: 0, min: 0 },
     maxDiscount: { type: Number, default: 0, min: 0 }, // only for percent (0 = no cap)
     applicableOn: { type: String, enum: ["all", "prepaid", "cod"], default: "all" },
-    applicableCategories: { type: [String], default: [] },
     isActive: { type: Boolean, default: true },
     expiresAt: { type: Date },
   },
@@ -2719,45 +2718,6 @@ function normalizeCouponPaymentScope(value) {
   if (normalized === "online" || normalized === "prepaid") return "prepaid";
   if (normalized === "cod") return "cod";
   return "all";
-}
-async function getCouponCategoryMatch(coupon, items, session) {
-  const requiredCategories = (Array.isArray(coupon?.applicableCategories)
-    ? coupon.applicableCategories
-    : [])
-    .map((category) => String(category).trim())
-    .filter(Boolean);
-  const subtotal = (items || []).reduce(
-    (sum, item) => sum + Number(item?.price || 0) * Number(item?.quantity || 1),
-    0,
-  );
-  if (!requiredCategories.length) return { matches: true, subtotal };
-
-  const productIds = [...new Set((items || [])
-    .map((item) => String(item?.productId || "").trim())
-    .filter((id) => mongoose.isValidObjectId(id)))];
-  const query = CatalogProduct.find({ _id: { $in: productIds } })
-    .select({ categoryIds: 1, categoryId: 1 })
-    .lean();
-  if (session) query.session(session);
-  const products = await query;
-  const productMap = new Map(products.map((product) => [String(product._id), product]));
-  const matchingItems = (items || []).filter((item) => {
-    const product = productMap.get(String(item?.productId || ""));
-    const categories = Array.isArray(product?.categoryIds) && product.categoryIds.length
-      ? product.categoryIds
-      : product?.categoryId != null
-        ? [product.categoryId]
-        : [];
-    return categories.some((category) => requiredCategories.includes(String(category)));
-  });
-
-  return {
-    matches: matchingItems.length > 0,
-    subtotal: matchingItems.reduce(
-      (sum, item) => sum + Number(item?.price || 0) * Number(item?.quantity || 1),
-      0,
-    ),
-  };
 }
 
 // Coupon redemption (one-time per user)
@@ -3776,7 +3736,7 @@ app.post("/api/addresses/delete", async (req, res) => {
 // POST /api/coupons/validate Body: { code, subtotal, userId? }
 app.post("/api/coupons/validate", async (req, res) => {
   try {
-    const { code, subtotal, userId, paymentMethod, items = [] } = req.body || {};
+    const { code, subtotal, userId, paymentMethod } = req.body || {};
     const c = String(code || "").trim().toUpperCase();
     const sub = Number(subtotal || 0);
     if (!c) return res.status(400).json({ error: "code is required" });
@@ -3796,15 +3756,6 @@ app.post("/api/coupons/validate", async (req, res) => {
     if (couponScope !== "all" && couponScope !== normalizeCouponPaymentScope(paymentMethod)) {
       return res.status(400).json({ error: `Coupon is valid only for ${couponScope === "cod" ? "COD" : "online payment"}` });
     }
-    const categoryMatch = await getCouponCategoryMatch(coupon, items);
-    if (!categoryMatch.matches) {
-      return res.status(400).json({
-        error: "This coupon is only applicable on selected products or categories in your cart.",
-        applicableCategories: coupon.applicableCategories || [],
-      });
-    }
-      discount = (categoryMatch.subtotal * Number(coupon.value || 0)) / 100;
-      discount = Math.max(0, Math.min(discount, categoryMatch.subtotal));
     if (coupon.expiresAt && new Date(coupon.expiresAt).getTime() < Date.now()) {
       return res.status(400).json({ error: "Coupon expired" });
     }
@@ -3832,7 +3783,6 @@ app.post("/api/coupons/validate", async (req, res) => {
         minSubtotal: coupon.minSubtotal || 0,
         maxDiscount: coupon.maxDiscount || 0,
         applicableOn: couponScope,
-        applicableCategories: coupon.applicableCategories || [],
       },
     });
   } catch (err) {
@@ -3845,7 +3795,7 @@ app.post("/api/coupons/validate", async (req, res) => {
 // POST /api/coupons/list Body: { limit?, userId? }
 app.post("/api/coupons/list", async (req, res) => {
   try {
-    const { limit = 10, userId, items: cartItems = [] } = req.body || {};
+    const { limit = 10, userId } = req.body || {};
     const limitNum = Math.max(parseInt(limit, 10) || 10, 1);
 
     const now = new Date();
@@ -3856,7 +3806,7 @@ app.post("/api/coupons/list", async (req, res) => {
       });
     }
 
-    const couponItems = await Coupon.find({
+    const items = await Coupon.find({
       isActive: true,
       $or: [{ expiresAt: { $exists: false } }, { expiresAt: null }, { expiresAt: { $gte: now } }],
       ...(excludeCodes.length ? { code: { $nin: excludeCodes } } : {}),
@@ -3866,15 +3816,7 @@ app.post("/api/coupons/list", async (req, res) => {
       .lean();
 
     // Keep only safe fields for user UI
-    const categoryIds = [...new Set(couponItems.flatMap((coupon) => (
-      Array.isArray(coupon.applicableCategories) ? coupon.applicableCategories : []
-    )).map((id) => Number(id)).filter((id) => Number.isFinite(id)))];
-    const categoryDocs = categoryIds.length
-      ? await Category.find({ id: { $in: categoryIds } }).select({ id: 1, title: 1 }).lean()
-      : [];
-    const categoryMap = new Map(categoryDocs.map((category) => [String(category.id), category.title]));
-
-    const safe = await Promise.all(couponItems.map(async (c) => ({
+    const safe = items.map((c) => ({
       _id: c._id,
       code: c.code,
       type: c.type,
@@ -3882,10 +3824,6 @@ app.post("/api/coupons/list", async (req, res) => {
       minSubtotal: c.minSubtotal || 0,
       maxDiscount: c.maxDiscount || 0,
       applicableOn: normalizeCouponPaymentScope(c.applicableOn),
-      applicableCategories: Array.isArray(c.applicableCategories) ? c.applicableCategories : [],
-      applicableCategoryLabels: (Array.isArray(c.applicableCategories) ? c.applicableCategories : [])
-        .map((id) => categoryMap.get(String(id)) || `Category ${id}`),
-      applicableToCart: (await getCouponCategoryMatch(c, cartItems)).matches,
       expiresAt: c.expiresAt || null,
     })));
 
@@ -4029,7 +3967,6 @@ app.post("/api/admin/coupons/create", async (req, res) => {
       isActive = true,
       expiresAt,
       applicableOn = "all",
-      applicableCategories = [],
       paymentMethod,
     } = req.body || {};
 
@@ -4052,10 +3989,6 @@ app.post("/api/admin/coupons/create", async (req, res) => {
       isActive: Boolean(isActive),
       expiresAt: expiresAt ? new Date(expiresAt) : undefined,
       applicableOn: normalizeCouponPaymentScope(applicableOn || paymentMethod),
-      applicableCategories: (Array.isArray(applicableCategories) ? applicableCategories : [])
-        .map((category) => String(category).trim())
-        .filter(Boolean)
-        .filter((category, index, categories) => categories.indexOf(category) === index),
     });
 
     return res.status(201).json({ item: couponDoc.toObject() });
@@ -4151,10 +4084,6 @@ app.post("/api/checkout", async (req, res) => {
         if (couponScope !== "all" && couponScope !== normalizeCouponPaymentScope(paymentMethod)) {
           throw new Error(`Coupon is valid only for ${couponScope === "cod" ? "COD" : "online payment"}`);
         }
-        const categoryMatch = await getCouponCategoryMatch(coupon, items, session);
-        if (!categoryMatch.matches) {
-          throw new Error("This coupon is only applicable on selected products or categories in your cart.");
-        }
         const minSub = Number(coupon.minSubtotal || 0);
         if (subtotal >= minSub) {
           if (coupon.type === "flat") {
@@ -4247,9 +4176,6 @@ app.post("/api/checkout", async (req, res) => {
     if (msg.startsWith("Coupon is valid only for")) {
       return res.status(400).json({ error: msg });
     }
-    if (msg.startsWith("This coupon is only applicable")) {
-      return res.status(400).json({ error: msg });
-    }
     console.error("Error creating checkout order", err);
     return res.status(500).json({ error: "Internal server error" });
   } finally {
@@ -4337,10 +4263,6 @@ app.post("/api/checkout/buy-now", async (req, res) => {
         if (couponScope !== "all" && couponScope !== normalizeCouponPaymentScope(paymentMethod)) {
           throw new Error(`Coupon is valid only for ${couponScope === "cod" ? "COD" : "online payment"}`);
         }
-        const categoryMatch = await getCouponCategoryMatch(coupon, items, session);
-        if (!categoryMatch.matches) {
-          throw new Error("This coupon is only applicable on selected products or categories in your cart.");
-        }
         const minSub = Number(coupon.minSubtotal || 0);
         if (subtotal >= minSub) {
           if (coupon.type === "flat") {
@@ -4423,7 +4345,7 @@ app.post("/api/checkout/buy-now", async (req, res) => {
     }
     const msg = err?.message || "Internal server error";
     if (msg.startsWith("Out of stock:")) return res.status(400).json({ error: msg });
-    if (msg === "Coupon already used" || msg.startsWith("Coupon is valid only for") || msg.startsWith("This coupon is only applicable")) {
+    if (msg === "Coupon already used" || msg.startsWith("Coupon is valid only for")) {
       return res.status(400).json({ error: msg });
     }
     console.error("Error creating buy-now checkout order", err);
