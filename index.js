@@ -2704,6 +2704,7 @@ const couponSchema = new mongoose.Schema(
     value: { type: Number, required: true, min: 0 },
     minSubtotal: { type: Number, default: 0, min: 0 },
     maxDiscount: { type: Number, default: 0, min: 0 }, // only for percent (0 = no cap)
+    applicableOn: { type: String, enum: ["all", "prepaid", "cod"], default: "all" },
     isActive: { type: Boolean, default: true },
     expiresAt: { type: Date },
   },
@@ -2711,6 +2712,13 @@ const couponSchema = new mongoose.Schema(
 );
 
 const Coupon = mongoose.model("Coupon", couponSchema, "coupons");
+
+function normalizeCouponPaymentScope(value) {
+  const normalized = String(value || "all").trim().toLowerCase();
+  if (normalized === "online" || normalized === "prepaid") return "prepaid";
+  if (normalized === "cod") return "cod";
+  return "all";
+}
 
 // Coupon redemption (one-time per user)
 const couponRedemptionSchema = new mongoose.Schema(
@@ -3728,7 +3736,7 @@ app.post("/api/addresses/delete", async (req, res) => {
 // POST /api/coupons/validate Body: { code, subtotal, userId? }
 app.post("/api/coupons/validate", async (req, res) => {
   try {
-    const { code, subtotal, userId } = req.body || {};
+    const { code, subtotal, userId, paymentMethod } = req.body || {};
     const c = String(code || "").trim().toUpperCase();
     const sub = Number(subtotal || 0);
     if (!c) return res.status(400).json({ error: "code is required" });
@@ -3744,6 +3752,10 @@ app.post("/api/coupons/validate", async (req, res) => {
 
     const coupon = await Coupon.findOne({ code: c, isActive: true }).lean();
     if (!coupon) return res.status(404).json({ error: "Invalid coupon" });
+    const couponScope = normalizeCouponPaymentScope(coupon.applicableOn);
+    if (couponScope !== "all" && couponScope !== normalizeCouponPaymentScope(paymentMethod)) {
+      return res.status(400).json({ error: `Coupon is valid only for ${couponScope === "cod" ? "COD" : "online payment"}` });
+    }
     if (coupon.expiresAt && new Date(coupon.expiresAt).getTime() < Date.now()) {
       return res.status(400).json({ error: "Coupon expired" });
     }
@@ -3770,6 +3782,7 @@ app.post("/api/coupons/validate", async (req, res) => {
         value: coupon.value,
         minSubtotal: coupon.minSubtotal || 0,
         maxDiscount: coupon.maxDiscount || 0,
+        applicableOn: couponScope,
       },
     });
   } catch (err) {
@@ -3810,6 +3823,7 @@ app.post("/api/coupons/list", async (req, res) => {
       value: c.value,
       minSubtotal: c.minSubtotal || 0,
       maxDiscount: c.maxDiscount || 0,
+      applicableOn: normalizeCouponPaymentScope(c.applicableOn),
       expiresAt: c.expiresAt || null,
     }));
 
@@ -3952,6 +3966,8 @@ app.post("/api/admin/coupons/create", async (req, res) => {
       maxDiscount = 0,
       isActive = true,
       expiresAt,
+      applicableOn = "all",
+      paymentMethod,
     } = req.body || {};
 
     const c = String(code || "").trim().toUpperCase();
@@ -3972,6 +3988,7 @@ app.post("/api/admin/coupons/create", async (req, res) => {
       maxDiscount: Math.max(0, Number(maxDiscount) || 0),
       isActive: Boolean(isActive),
       expiresAt: expiresAt ? new Date(expiresAt) : undefined,
+      applicableOn: normalizeCouponPaymentScope(applicableOn || paymentMethod),
     });
 
     return res.status(201).json({ item: couponDoc.toObject() });
@@ -4063,6 +4080,10 @@ app.post("/api/checkout", async (req, res) => {
         .session(session)
         .lean();
       if (coupon && (!coupon.expiresAt || new Date(coupon.expiresAt).getTime() >= Date.now())) {
+        const couponScope = normalizeCouponPaymentScope(coupon.applicableOn);
+        if (couponScope !== "all" && couponScope !== normalizeCouponPaymentScope(paymentMethod)) {
+          throw new Error(`Coupon is valid only for ${couponScope === "cod" ? "COD" : "online payment"}`);
+        }
         const minSub = Number(coupon.minSubtotal || 0);
         if (subtotal >= minSub) {
           if (coupon.type === "flat") {
@@ -4152,6 +4173,9 @@ app.post("/api/checkout", async (req, res) => {
     if (msg === "Coupon already used") {
       return res.status(400).json({ error: msg });
     }
+    if (msg.startsWith("Coupon is valid only for")) {
+      return res.status(400).json({ error: msg });
+    }
     console.error("Error creating checkout order", err);
     return res.status(500).json({ error: "Internal server error" });
   } finally {
@@ -4235,6 +4259,10 @@ app.post("/api/checkout/buy-now", async (req, res) => {
         .session(session)
         .lean();
       if (coupon && (!coupon.expiresAt || new Date(coupon.expiresAt).getTime() >= Date.now())) {
+        const couponScope = normalizeCouponPaymentScope(coupon.applicableOn);
+        if (couponScope !== "all" && couponScope !== normalizeCouponPaymentScope(paymentMethod)) {
+          throw new Error(`Coupon is valid only for ${couponScope === "cod" ? "COD" : "online payment"}`);
+        }
         const minSub = Number(coupon.minSubtotal || 0);
         if (subtotal >= minSub) {
           if (coupon.type === "flat") {
@@ -4317,7 +4345,9 @@ app.post("/api/checkout/buy-now", async (req, res) => {
     }
     const msg = err?.message || "Internal server error";
     if (msg.startsWith("Out of stock:")) return res.status(400).json({ error: msg });
-    if (msg === "Coupon already used") return res.status(400).json({ error: msg });
+    if (msg === "Coupon already used" || msg.startsWith("Coupon is valid only for")) {
+      return res.status(400).json({ error: msg });
+    }
     console.error("Error creating buy-now checkout order", err);
     return res.status(500).json({ error: "Internal server error" });
   } finally {
