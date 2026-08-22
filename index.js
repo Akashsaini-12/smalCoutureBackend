@@ -10,102 +10,10 @@ const crypto = require("crypto");
 const fs = require("fs");
 const multer = require("multer");
 const Razorpay = require("razorpay");
-const axios = require("axios");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-
-function sendMetaCapiEvent(payload) {
-  const accessToken = String(process.env.META_ACCESS_TOKEN || "").trim();
-  const pixelId = String(process.env.META_PIXEL_ID || "").trim();
-
-  if (!accessToken || !pixelId) {
-    return Promise.resolve({
-      ok: false,
-      error: "META_ACCESS_TOKEN and META_PIXEL_ID must be configured",
-    });
-  }
-
-  const apiUrl = `https://graph.facebook.com/${process.env.META_API_VERSION || "v20.0"}/${pixelId}/events`;
-
-  return axios
-    .post(apiUrl, { data: [payload] }, {
-      params: { access_token: accessToken },
-      headers: { "Content-Type": "application/json" },
-      timeout: 15000,
-    })
-    .then((response) => ({
-      ok: response?.status >= 200 && response?.status < 300,
-      status: response?.status,
-      data: response?.data,
-    }))
-    .catch((error) => ({
-      ok: false,
-      status: error?.response?.status || 500,
-      error: error?.response?.data || error?.message || "Meta CAPI request failed",
-    }));
-}
-
-app.post("/api/meta/capi", async (req, res) => {
-  try {
-    const body = req.body || {};
-    const eventName = String(body.event_name || body.eventName || "").trim();
-    const eventId = String(body.event_id || body.eventId || "").trim();
-
-    if (!eventName || !eventId) {
-      return res.status(400).json({
-        ok: false,
-        error: "event_name and event_id are required",
-      });
-    }
-
-    const customData = body.custom_data || body.customData || {};
-    if (eventName.toLowerCase() === "purchase") {
-      const orderId = String(customData.order_id || "").trim();
-      if (!orderId) {
-        return res.status(400).json({
-          ok: false,
-          error: "Purchase events require a valid order_id in custom_data",
-        });
-      }
-    }
-
-    const payload = {
-      event_name: eventName,
-      event_time: Number(body.event_time || Math.floor(Date.now() / 1000)),
-      event_id: eventId,
-      action_source: String(body.action_source || "website").trim() || "website",
-      event_source_url: String(body.event_source_url || "").trim(),
-      custom_data: customData,
-      user_data: body.user_data || body.userData || {
-        em: [],
-        ph: [],
-        fn: [],
-        ln: [],
-        ge: [],
-        db: [],
-        ct: [],
-        st: [],
-        zp: [],
-        country: [],
-      },
-    };
-
-    const result = await sendMetaCapiEvent(payload);
-    if (!result.ok) {
-      return res.status(result.status || 500).json({
-        ok: false,
-        error: result.error,
-      });
-    }
-
-    return res.json({ ok: true, result });
-  } catch (err) {
-    console.error("Meta CAPI error", err);
-    return res.status(500).json({ ok: false, error: "Meta CAPI failed" });
-  }
-});
 
 // Health/ping endpoint to confirm API hits
 app.get("/api/ping", (req, res) => {
@@ -113,9 +21,7 @@ app.get("/api/ping", (req, res) => {
   const ageRaw = process.env.PING_AGE;
   const age = ageRaw == null || ageRaw === "" ? null : Number(ageRaw);
 
-  console.log(
-    `[PING] ${new Date().toISOString()} ${req.method} ${req.originalUrl}`,
-  );
+  console.log(`[PING] ${new Date().toISOString()} ${req.method} ${req.originalUrl}`);
   return res.json({
     ok: true,
     message: "API is reachable",
@@ -131,9 +37,7 @@ app.get(["/bing", "/api/bing"], (req, res) => {
   const ageRaw = process.env.PING_AGE;
   const age = ageRaw == null || ageRaw === "" ? null : Number(ageRaw);
 
-  console.log(
-    `[BING] ${new Date().toISOString()} ${req.method} ${req.originalUrl}`,
-  );
+  console.log(`[BING] ${new Date().toISOString()} ${req.method} ${req.originalUrl}`);
   return res.json({
     ok: true,
     message: "bing ok",
@@ -157,9 +61,7 @@ app.post("/api/create-order", async (req, res) => {
   try {
     const razorpay = getRazorpayClient();
     if (!razorpay) {
-      return res
-        .status(500)
-        .json({ ok: false, error: "Razorpay not configured" });
+      return res.status(500).json({ ok: false, error: "Razorpay not configured" });
     }
 
     const amountRaw = req.body?.amount;
@@ -167,15 +69,10 @@ app.post("/api/create-order", async (req, res) => {
     if (!Number.isFinite(amount) || amount < 100) {
       return res
         .status(400)
-        .json({
-          ok: false,
-          error: "amount must be an integer paise value >= 100",
-        });
+        .json({ ok: false, error: "amount must be an integer paise value >= 100" });
     }
 
-    const currency = String(req.body?.currency || "INR")
-      .trim()
-      .toUpperCase();
+    const currency = String(req.body?.currency || "INR").trim().toUpperCase();
     const receipt = String(req.body?.receipt || `rcpt_${Date.now()}`).trim();
 
     const order = await razorpay.orders.create({
@@ -199,12 +96,10 @@ app.post("/api/create-order", async (req, res) => {
       err?.message ||
       "Failed to create order";
     console.error("Razorpay create-order error", err);
-    return res
-      .status(statusCode >= 400 && statusCode < 600 ? statusCode : 500)
-      .json({
-        ok: false,
-        error: String(desc),
-      });
+    return res.status(statusCode >= 400 && statusCode < 600 ? statusCode : 500).json({
+      ok: false,
+      error: String(desc),
+    });
   }
 });
 
@@ -214,23 +109,15 @@ app.post("/api/verify-payment", (req, res) => {
   try {
     const secret = String(process.env.RAZORPAY_KEY_SECRET || "").trim();
     if (!secret) {
-      return res
-        .status(500)
-        .json({ ok: false, error: "Razorpay not configured" });
+      return res.status(500).json({ ok: false, error: "Razorpay not configured" });
     }
 
     const razorpay_order_id = String(req.body?.razorpay_order_id || "").trim();
-    const razorpay_payment_id = String(
-      req.body?.razorpay_payment_id || "",
-    ).trim();
-    const razorpay_signature = String(
-      req.body?.razorpay_signature || "",
-    ).trim();
+    const razorpay_payment_id = String(req.body?.razorpay_payment_id || "").trim();
+    const razorpay_signature = String(req.body?.razorpay_signature || "").trim();
 
     if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "Missing Razorpay fields" });
+      return res.status(400).json({ ok: false, error: "Missing Razorpay fields" });
     }
 
     const body = `${razorpay_order_id}|${razorpay_payment_id}`;
@@ -257,29 +144,16 @@ app.post("/api/payment-events/log", async (req, res) => {
   try {
     const body = req.body || {};
     const userId = String(body.userId || "").trim();
-    if (!userId)
-      return res.status(400).json({ ok: false, error: "userId is required" });
+    if (!userId) return res.status(400).json({ ok: false, error: "userId is required" });
 
-    const provider = String(body.provider || "")
-      .trim()
-      .toLowerCase();
-    const eventType = String(body.eventType || "")
-      .trim()
-      .toLowerCase();
-    const status = String(body.status || "")
-      .trim()
-      .toLowerCase();
+    const provider = String(body.provider || "").trim().toLowerCase();
+    const eventType = String(body.eventType || "").trim().toLowerCase();
+    const status = String(body.status || "").trim().toLowerCase();
     const amount = Math.max(0, Math.round(Number(body.amount) || 0));
-    const currency = String(body.currency || "INR")
-      .trim()
-      .toUpperCase();
+    const currency = String(body.currency || "INR").trim().toUpperCase();
 
-    const razorpayOrderId = String(
-      body.razorpay_order_id || body.razorpayOrderId || "",
-    ).trim();
-    const razorpayPaymentId = String(
-      body.razorpay_payment_id || body.razorpayPaymentId || "",
-    ).trim();
+    const razorpayOrderId = String(body.razorpay_order_id || body.razorpayOrderId || "").trim();
+    const razorpayPaymentId = String(body.razorpay_payment_id || body.razorpayPaymentId || "").trim();
 
     const reason = String(body.reason || "").trim();
     const meta = body.meta != null ? body.meta : null;
@@ -322,10 +196,7 @@ app.post("/api/payment-events/list", async (req, res) => {
   }
 });
 
-const {
-  createMixMatchLookModel,
-  registerMixMatchRoutes,
-} = require("./routes/mixmatch");
+const { createMixMatchLookModel, registerMixMatchRoutes } = require("./routes/mixmatch");
 const { ensureUploadFilesAsync } = require("./utils/ensure-upload-files");
 const MixMatchLook = createMixMatchLookModel(mongoose);
 
@@ -345,7 +216,8 @@ const SMTP_PASS = SMTP_PASS_RAW.replace(/\s+/g, "");
 
 const SMTP_PASS_PLACEHOLDER = "your_16_char_app_password";
 const isGmailLike = SMTP_HOST.toLowerCase().includes("gmail");
-const smtpUserLooksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(SMTP_USER);
+const smtpUserLooksLikeEmail =
+  /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(SMTP_USER);
 // Gmail SMTP auth user must be the full email (e.g. you@gmail.com), not a short name.
 const SMTP_USER_OK = !isGmailLike || smtpUserLooksLikeEmail;
 const SMTP_PASS_OK =
@@ -380,7 +252,7 @@ async function sendOtpEmail(to, otp, name = "") {
 
   if (!SMTP_READY) {
     console.warn(
-      "SMTP not configured — OTP printed to console only. Set `SMTP_USER` and `SMTP_PASS` in .env (quote the value if it contains spaces).",
+      "SMTP not configured — OTP printed to console only. Set `SMTP_USER` and `SMTP_PASS` in .env (quote the value if it contains spaces)."
     );
     return false;
   }
@@ -444,14 +316,7 @@ const UPLOAD_ALLOWED_MIME = new Set([
   "image/gif",
   "image/svg+xml",
 ]);
-const UPLOAD_ALLOWED_EXT = new Set([
-  ".jpg",
-  ".jpeg",
-  ".png",
-  ".webp",
-  ".gif",
-  ".svg",
-]);
+const UPLOAD_ALLOWED_EXT = new Set([".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg"]);
 
 function ensureUploadDir() {
   if (!fs.existsSync(UPLOAD_DIR)) {
@@ -467,9 +332,7 @@ function uploadPublicBaseUrl(req) {
   const proto = (req.get("x-forwarded-proto") || req.protocol || "http")
     .split(",")[0]
     .trim();
-  const host = (req.get("x-forwarded-host") || req.get("host") || "")
-    .split(",")[0]
-    .trim();
+  const host = (req.get("x-forwarded-host") || req.get("host") || "").split(",")[0].trim();
   return `${proto}://${host}`;
 }
 
@@ -551,27 +414,21 @@ app.post(
   },
 );
 
+
 // ─── User Schema ────────────────────────────────────────────────────────────
 const userSchema = new mongoose.Schema(
   {
-    firstName: { type: String, required: true, trim: true },
-    lastName: { type: String, trim: true, default: "" },
-    email: {
-      type: String,
-      required: true,
-      unique: true,
-      lowercase: true,
-      trim: true,
-      index: true,
-    },
-    phone: { type: String, trim: true, default: "" },
-    avatarUrl: { type: String, trim: true, default: "" },
-    passwordHash: { type: String, required: true },
+    firstName:   { type: String, required: true, trim: true },
+    lastName:    { type: String, trim: true, default: "" },
+    email:       { type: String, required: true, unique: true, lowercase: true, trim: true, index: true },
+    phone:       { type: String, trim: true, default: "" },
+    avatarUrl:   { type: String, trim: true, default: "" },
+    passwordHash:{ type: String, required: true },
     // role: 0 = admin, 1 = user
-    role: { type: Number, enum: [0, 1], default: 1 },
-    isVerified: { type: Boolean, default: false },
-    otp: { type: String, default: "" },
-    otpExpiry: { type: Date },
+    role:        { type: Number, enum: [0, 1], default: 1 },
+    isVerified:  { type: Boolean, default: false },
+    otp:         { type: String, default: "" },
+    otpExpiry:   { type: Date },
   },
   { timestamps: true },
 );
@@ -608,27 +465,16 @@ app.post("/api/auth/register", async (req, res) => {
   try {
     const { firstName, lastName, email, phone, password } = req.body || {};
     if (!firstName || !email || !password) {
-      return res
-        .status(400)
-        .json({ error: "firstName, email and password are required" });
+      return res.status(400).json({ error: "firstName, email and password are required" });
     }
     if (password.length < 6) {
-      return res
-        .status(400)
-        .json({ error: "Password must be at least 6 characters" });
+      return res.status(400).json({ error: "Password must be at least 6 characters" });
     }
 
-    const existing = await User.findOne({
-      email: String(email).toLowerCase().trim(),
-    });
-    if (existing)
-      return res.status(409).json({ error: "Email already registered" });
+    const existing = await User.findOne({ email: String(email).toLowerCase().trim() });
+    if (existing) return res.status(409).json({ error: "Email already registered" });
 
     const hash = await bcrypt.hash(String(password), 10);
-
-    // Generate 6-digit OTP
-    const otp = String(Math.floor(100000 + Math.random() * 900000));
-    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 min
 
     const user = await User.create({
       firstName: String(firstName).trim(),
@@ -637,17 +483,30 @@ app.post("/api/auth/register", async (req, res) => {
       phone: phone ? String(phone).trim() : "",
       passwordHash: hash,
       role: 1,
-      isVerified: false,
-      otp,
-      otpExpiry,
+      isVerified: true,
+      otp: "",
+      otpExpiry: undefined,
     });
 
-    await sendOtpEmail(user.email, otp, user.firstName);
+    const token = jwt.sign(
+      { userId: String(user._id), email: user.email, role: user.role },
+      JWT_SECRET,
+      { expiresIn: JWT_EXPIRES }
+    );
 
     return res.status(201).json({
-      message: "Registered successfully. OTP sent to your email.",
-      userId: user._id,
-      email: user.email,
+      message: "Registered successfully.",
+      token,
+      user: {
+        _id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        phone: user.phone,
+        avatarUrl: user.avatarUrl || "",
+        role: user.role,
+        isVerified: user.isVerified,
+      },
     });
   } catch (err) {
     if (err && err.code === 11000) {
@@ -665,12 +524,9 @@ app.post("/api/auth/send-otp", async (req, res) => {
     const { email } = req.body || {};
     if (!email) return res.status(400).json({ error: "email is required" });
 
-    const user = await User.findOne({
-      email: String(email).toLowerCase().trim(),
-    });
+    const user = await User.findOne({ email: String(email).toLowerCase().trim() });
     if (!user) return res.status(404).json({ error: "User not found" });
-    if (user.isVerified)
-      return res.status(400).json({ error: "Account already verified" });
+    if (user.isVerified) return res.status(400).json({ error: "Account already verified" });
 
     const otp = String(Math.floor(100000 + Math.random() * 900000));
     user.otp = otp;
@@ -690,15 +546,11 @@ app.post("/api/auth/send-otp", async (req, res) => {
 app.post("/api/auth/verify-otp", async (req, res) => {
   try {
     const { email, otp } = req.body || {};
-    if (!email || !otp)
-      return res.status(400).json({ error: "email and otp are required" });
+    if (!email || !otp) return res.status(400).json({ error: "email and otp are required" });
 
-    const user = await User.findOne({
-      email: String(email).toLowerCase().trim(),
-    });
+    const user = await User.findOne({ email: String(email).toLowerCase().trim() });
     if (!user) return res.status(404).json({ error: "User not found" });
-    if (user.isVerified)
-      return res.status(400).json({ error: "Account already verified" });
+    if (user.isVerified) return res.status(400).json({ error: "Account already verified" });
 
     const enteredOtp = String(otp).trim();
     const isMasterOtp = enteredOtp === "12345";
@@ -708,9 +560,7 @@ app.post("/api/auth/verify-otp", async (req, res) => {
         return res.status(400).json({ error: "Invalid OTP" });
       }
       if (user.otpExpiry && new Date(user.otpExpiry).getTime() < Date.now()) {
-        return res
-          .status(400)
-          .json({ error: "OTP expired. Please request a new one." });
+        return res.status(400).json({ error: "OTP expired. Please request a new one." });
       }
     }
 
@@ -722,7 +572,7 @@ app.post("/api/auth/verify-otp", async (req, res) => {
     const token = jwt.sign(
       { userId: String(user._id), email: user.email, role: user.role },
       JWT_SECRET,
-      { expiresIn: JWT_EXPIRES },
+      { expiresIn: JWT_EXPIRES }
     );
 
     return res.json({
@@ -756,9 +606,7 @@ app.post("/api/auth/login", async (req, res) => {
     const { emailOrPhone, email, password } = req.body || {};
     const rawIdentifier = String(emailOrPhone || email || "").trim();
     if (!rawIdentifier || !password) {
-      return res
-        .status(400)
-        .json({ error: "email/mobile and password are required" });
+      return res.status(400).json({ error: "email/mobile and password are required" });
     }
 
     const normalizedIdentifier = rawIdentifier.toLowerCase();
@@ -776,23 +624,16 @@ app.post("/api/auth/login", async (req, res) => {
     if (!match) return res.status(401).json({ error: "Invalid credentials" });
 
     if (!user.isVerified) {
-      // Resend OTP silently
-      const otp = String(Math.floor(100000 + Math.random() * 900000));
-      user.otp = otp;
-      user.otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
+      user.isVerified = true;
+      user.otp = "";
+      user.otpExpiry = undefined;
       await user.save();
-      await sendOtpEmail(user.email, otp, user.firstName);
-      return res.status(403).json({
-        error: "Account not verified. OTP resent to your email.",
-        needsVerification: true,
-        email: user.email,
-      });
     }
 
     const token = jwt.sign(
       { userId: String(user._id), email: user.email, role: user.role },
       JWT_SECRET,
-      { expiresIn: JWT_EXPIRES },
+      { expiresIn: JWT_EXPIRES }
     );
 
     return res.json({
@@ -819,9 +660,7 @@ app.post("/api/auth/login", async (req, res) => {
 app.post("/api/auth/forgot-password/send-otp", async (req, res) => {
   try {
     const { email } = req.body || {};
-    const normalizedEmail = String(email || "")
-      .toLowerCase()
-      .trim();
+    const normalizedEmail = String(email || "").toLowerCase().trim();
     if (!normalizedEmail) {
       return res.status(400).json({ error: "email is required" });
     }
@@ -847,20 +686,14 @@ app.post("/api/auth/forgot-password/send-otp", async (req, res) => {
 app.post("/api/auth/forgot-password/verify-otp", async (req, res) => {
   try {
     const { email, otp, newPassword } = req.body || {};
-    const normalizedEmail = String(email || "")
-      .toLowerCase()
-      .trim();
+    const normalizedEmail = String(email || "").toLowerCase().trim();
     const enteredOtp = String(otp || "").trim();
 
     if (!normalizedEmail || !enteredOtp || !newPassword) {
-      return res
-        .status(400)
-        .json({ error: "email, otp and newPassword are required" });
+      return res.status(400).json({ error: "email, otp and newPassword are required" });
     }
     if (String(newPassword).length < 6) {
-      return res
-        .status(400)
-        .json({ error: "Password must be at least 6 characters" });
+      return res.status(400).json({ error: "Password must be at least 6 characters" });
     }
 
     const user = await User.findOne({ email: normalizedEmail });
@@ -870,9 +703,7 @@ app.post("/api/auth/forgot-password/verify-otp", async (req, res) => {
       return res.status(400).json({ error: "Invalid OTP" });
     }
     if (user.otpExpiry && new Date(user.otpExpiry).getTime() < Date.now()) {
-      return res
-        .status(400)
-        .json({ error: "OTP expired. Please request a new one." });
+      return res.status(400).json({ error: "OTP expired. Please request a new one." });
     }
 
     user.passwordHash = await bcrypt.hash(String(newPassword), 10);
@@ -909,8 +740,7 @@ app.patch("/api/auth/me", authMiddleware, async (req, res) => {
 
     if (firstName !== undefined) {
       const fn = String(firstName).trim();
-      if (!fn)
-        return res.status(400).json({ error: "firstName cannot be empty" });
+      if (!fn) return res.status(400).json({ error: "firstName cannot be empty" });
       update.firstName = fn;
     }
     if (lastName !== undefined) {
@@ -931,11 +761,7 @@ app.patch("/api/auth/me", authMiddleware, async (req, res) => {
       return res.json({ user, message: "No changes" });
     }
 
-    const user = await User.findByIdAndUpdate(
-      req.user.userId,
-      { $set: update },
-      { new: true },
-    )
+    const user = await User.findByIdAndUpdate(req.user.userId, { $set: update }, { new: true })
       .select("-passwordHash -otp -otpExpiry")
       .lean();
 
@@ -952,23 +778,15 @@ app.post("/api/auth/change-password", authMiddleware, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body || {};
     if (!currentPassword || !newPassword) {
-      return res
-        .status(400)
-        .json({ error: "currentPassword and newPassword are required" });
+      return res.status(400).json({ error: "currentPassword and newPassword are required" });
     }
     if (newPassword.length < 6) {
-      return res
-        .status(400)
-        .json({ error: "New password must be at least 6 characters" });
+      return res.status(400).json({ error: "New password must be at least 6 characters" });
     }
 
     const user = await User.findById(req.user.userId);
-    const match = await bcrypt.compare(
-      String(currentPassword),
-      user.passwordHash,
-    );
-    if (!match)
-      return res.status(401).json({ error: "Current password is incorrect" });
+    const match = await bcrypt.compare(String(currentPassword), user.passwordHash);
+    if (!match) return res.status(401).json({ error: "Current password is incorrect" });
 
     user.passwordHash = await bcrypt.hash(String(newPassword), 10);
     await user.save();
@@ -980,23 +798,18 @@ app.post("/api/auth/change-password", authMiddleware, async (req, res) => {
 });
 
 // Admin: list all users
-app.get(
-  "/api/admin/users",
-  authMiddleware,
-  adminMiddleware,
-  async (req, res) => {
-    try {
-      const users = await User.find({})
-        .select("-passwordHash -otp -otpExpiry")
-        .sort({ createdAt: -1 })
-        .lean();
-      return res.json({ users });
-    } catch (err) {
-      console.error("Admin list users error:", err);
-      return res.status(500).json({ error: "Internal server error" });
-    }
-  },
-);
+app.get("/api/admin/users", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const users = await User.find({})
+      .select("-passwordHash -otp -otpExpiry")
+      .sort({ createdAt: -1 })
+      .lean();
+    return res.json({ users });
+  } catch (err) {
+    console.error("Admin list users error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 const MIXMATCH_FALLBACK_LOOKS = [
   {
@@ -1013,8 +826,7 @@ const MIXMATCH_FALLBACK_LOOKS = [
         price: "₹76.00",
         color: "Black",
         size: "M",
-        imgSrc:
-          "cdn/shop/files/47871690_900baefb-2629-4a3f-be32-4bde20cbd55253da.jpg?crop=center&height=66&v=1708500574&width=50",
+        imgSrc: "cdn/shop/files/47871690_900baefb-2629-4a3f-be32-4bde20cbd55253da.jpg?crop=center&height=66&v=1708500574&width=50",
         imgAlt: "Flared Trousers",
       },
       {
@@ -1024,8 +836,7 @@ const MIXMATCH_FALLBACK_LOOKS = [
         price: "₹69.00",
         color: "White",
         size: "L",
-        imgSrc:
-          "cdn/shop/files/47871696f279.jpg?crop=center&height=66&v=1708499887&width=50",
+        imgSrc: "cdn/shop/files/47871696f279.jpg?crop=center&height=66&v=1708499887&width=50",
         imgAlt: "Short sleeve T-shirt",
       },
     ],
@@ -1034,8 +845,7 @@ const MIXMATCH_FALLBACK_LOOKS = [
     id: "look-2",
     dataId: "shop_this_look_AVdw3f",
     headingText: "Beautifully Functional. Purposefully Designed.",
-    imageUrl:
-      "cdn/shop/files/lookbook-3_bc7bcae7-cb23-4629-a100-5952dd11fec533d2.jpg?v=1708490894&width=1500",
+    imageUrl: "cdn/shop/files/lookbook-3_bc7bcae7-cb23-4629-a100-5952dd11fec533d2.jpg?v=1708490894&width=1500",
     imageAlt: "lookbook image 2",
     products: [
       {
@@ -1045,8 +855,7 @@ const MIXMATCH_FALLBACK_LOOKS = [
         price: "₹105.00",
         color: "Navy",
         size: "M",
-        imgSrc:
-          "cdn/shop/files/47871684_b7ade5f4-d637-43d3-a3fe-ee6aebfb1496e16f.jpg?crop=center&height=66&v=1708500459&width=50",
+        imgSrc: "cdn/shop/files/47871684_b7ade5f4-d637-43d3-a3fe-ee6aebfb1496e16f.jpg?crop=center&height=66&v=1708500459&width=50",
         imgAlt: "Bardot Sweater",
       },
       {
@@ -1056,8 +865,7 @@ const MIXMATCH_FALLBACK_LOOKS = [
         price: "₹76.00",
         color: "Grey",
         size: "S",
-        imgSrc:
-          "cdn/shop/files/47871691_14249914-e5f0-4795-b269-2b82037de0e4dca0.jpg?crop=center&height=66&v=1709200976&width=50",
+        imgSrc: "cdn/shop/files/47871691_14249914-e5f0-4795-b269-2b82037de0e4dca0.jpg?crop=center&height=66&v=1709200976&width=50",
         imgAlt: "Flared Grey",
       },
     ],
@@ -1076,8 +884,7 @@ const MIXMATCH_FALLBACK_LOOKS = [
         price: "₹58.00",
         color: "Tan",
         size: "M",
-        imgSrc:
-          "cdn/shop/products/47871697bc7f.jpg?crop=center&height=66&v=1708332609&width=50",
+        imgSrc: "cdn/shop/products/47871697bc7f.jpg?crop=center&height=66&v=1708332609&width=50",
         imgAlt: "The Cotton Tan",
       },
       {
@@ -1087,8 +894,7 @@ const MIXMATCH_FALLBACK_LOOKS = [
         price: "₹87.00",
         color: "Blue",
         size: "32",
-        imgSrc:
-          "cdn/shop/files/47871702_07417b37-03d2-4c1e-919d-21431f912a81b8f5.jpg?crop=center&height=66&v=1708499674&width=50",
+        imgSrc: "cdn/shop/files/47871702_07417b37-03d2-4c1e-919d-21431f912a81b8f5.jpg?crop=center&height=66&v=1708499674&width=50",
         imgAlt: "Faded Effect Jean",
       },
     ],
@@ -1159,8 +965,7 @@ const DEFAULT_COLLECTION_HEADER_SLIDES = [
     title: "All products",
     description:
       "Here is your chance to upgrade your wardrobe with a variation of styles and fits that are both feminine and relaxed.",
-    imageUrl:
-      "../cdn/shop/files/collection-banner-section8967.jpg?v=1709194155&width=3840",
+    imageUrl: "../cdn/shop/files/collection-banner-section8967.jpg?v=1709194155&width=3840",
     enabled: true,
   },
 ];
@@ -1192,11 +997,7 @@ const testimonialSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
-const Testimonial = mongoose.model(
-  "Testimonial",
-  testimonialSchema,
-  "testimonials",
-);
+const Testimonial = mongoose.model("Testimonial", testimonialSchema, "testimonials");
 
 const DEFAULT_TESTIMONIALS = [
   {
@@ -1204,9 +1005,9 @@ const DEFAULT_TESTIMONIALS = [
     name: "Jared S.",
     title: "Love it so much",
     rating: 5,
-    text: "Was I in Hawaii?! No. Did I feel like I was in Hawaii?! No, because it’s snowing outside. But, would I wear this in Hawaii ❤️",
-    mainImageUrl:
-      "/cdn/shop/files/img-test-timonial-03fa62.jpg?v=1709127619&width=360",
+    text:
+      "Was I in Hawaii?! No. Did I feel like I was in Hawaii?! No, because it’s snowing outside. But, would I wear this in Hawaii ❤️",
+    mainImageUrl: "/cdn/shop/files/img-test-timonial-03fa62.jpg?v=1709127619&width=360",
     productTitle: "Denim Jacket",
     productHref: "zh/products/denim-jacket.html",
     productImageUrl: "/cdn/shop/files/478719501ea0.jpg?v=1708670711&width=360",
@@ -1218,8 +1019,7 @@ const DEFAULT_TESTIMONIALS = [
     title: "Love it so much",
     rating: 5,
     text: "Always getting compliments from family, friends, and strangers.",
-    mainImageUrl:
-      "/cdn/shop/files/img-test-timonial-01fa62.jpg?v=1709127619&width=360",
+    mainImageUrl: "/cdn/shop/files/img-test-timonial-01fa62.jpg?v=1709127619&width=360",
     productTitle: "Long Sleeve Shirt",
     productHref: "zh/products/long-sleeve-shirt.html",
     productImageUrl: "/cdn/shop/files/478717726d12.jpg?v=1708497461&width=360",
@@ -1230,13 +1030,13 @@ const DEFAULT_TESTIMONIALS = [
     name: "Ben B.",
     title: "Love it so much",
     rating: 5,
-    text: "Hands down one of the best shirts I’ve ever owned. Fits great, feels amazing, seems to stay cool and is somewhat water resistant.",
+    text:
+      "Hands down one of the best shirts I’ve ever owned. Fits great, feels amazing, seems to stay cool and is somewhat water resistant.",
     mainImageUrl:
       "/cdn/shop/files/img-testimonial-02_a64ec697-0467-4648-84cc-9ebe5c6150bb3a00.jpg?v=1709127960&width=360",
     productTitle: "The Cocoa Shirt",
     productHref: "zh/products/the-cocoa-shirt.html",
-    productImageUrl:
-      "/cdn/shop/products/47871778e8b8.jpg?v=1708333049&width=360",
+    productImageUrl: "/cdn/shop/products/47871778e8b8.jpg?v=1708333049&width=360",
     enabled: true,
   },
 ];
@@ -1273,11 +1073,7 @@ const filterPromoSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-const FilterPromo = mongoose.model(
-  "FilterPromo",
-  filterPromoSchema,
-  "filter_promos",
-);
+const FilterPromo = mongoose.model("FilterPromo", filterPromoSchema, "filter_promos");
 
 // Categories schema/model (used by /api/categories)
 // Shape: { id, title, count, image, parentId? } — parentId null/omit = top-level; numeric = subcategory
@@ -1329,7 +1125,8 @@ async function nextAutoSortOrder(parentId) {
       },
     },
   ]);
-  const maxSo = agg[0] && agg[0].maxSo != null ? Number(agg[0].maxSo) : -1;
+  const maxSo =
+    agg[0] && agg[0].maxSo != null ? Number(agg[0].maxSo) : -1;
   return maxSo + 1;
 }
 
@@ -1390,7 +1187,8 @@ async function attachLiveProductCounts(categories) {
   });
   return categories.map((cat) => {
     let n = 0;
-    const isRoot = cat.parentId == null || cat.parentId === undefined;
+    const isRoot =
+      cat.parentId == null || cat.parentId === undefined;
     if (isRoot) {
       const ids = [cat.id, ...(childIdsByParent.get(cat.id) || [])];
       ids.forEach((id) => {
@@ -1402,6 +1200,9 @@ async function attachLiveProductCounts(categories) {
     return { ...cat, count: String(n) };
   });
 }
+
+
+
 
 app.get("/api/slider", async (req, res) => {
   try {
@@ -1425,23 +1226,17 @@ app.get("/api/collection-header-slides", async (req, res) => {
     // If DB is not connected, serve defaults so UI still works.
     if (mongoose.connection.readyState !== 1 || !mongoose.connection.db) {
       return res.json(
-        DEFAULT_COLLECTION_HEADER_SLIDES.filter((s) => s && s.enabled).sort(
-          (a, b) => (a.id || 0) - (b.id || 0),
-        ),
+        DEFAULT_COLLECTION_HEADER_SLIDES.filter((s) => s && s.enabled).sort((a, b) => (a.id || 0) - (b.id || 0)),
       );
     }
     await seedCollectionHeaderSlidesIfEmpty();
-    const items = await CollectionHeaderSlide.find({ enabled: true })
-      .sort({ id: 1 })
-      .lean();
+    const items = await CollectionHeaderSlide.find({ enabled: true }).sort({ id: 1 }).lean();
     return res.json(items);
   } catch (err) {
     console.error("Error fetching collection header slides", err);
     // Fallback to defaults on errors (avoid breaking storefront)
     return res.json(
-      DEFAULT_COLLECTION_HEADER_SLIDES.filter((s) => s && s.enabled).sort(
-        (a, b) => (a.id || 0) - (b.id || 0),
-      ),
+      DEFAULT_COLLECTION_HEADER_SLIDES.filter((s) => s && s.enabled).sort((a, b) => (a.id || 0) - (b.id || 0)),
     );
   }
 });
@@ -1450,195 +1245,137 @@ app.get("/api/collection-header-slides", async (req, res) => {
 app.get("/api/testimonials", async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1 || !mongoose.connection.db) {
-      return res.json(
-        DEFAULT_TESTIMONIALS.filter((t) => t && t.enabled).sort(
-          (a, b) => (a.id || 0) - (b.id || 0),
-        ),
-      );
+      return res.json(DEFAULT_TESTIMONIALS.filter((t) => t && t.enabled).sort((a, b) => (a.id || 0) - (b.id || 0)));
     }
     await seedTestimonialsIfEmpty();
-    const items = await Testimonial.find({ enabled: true })
-      .sort({ id: 1 })
-      .lean();
+    const items = await Testimonial.find({ enabled: true }).sort({ id: 1 }).lean();
     return res.json(items);
   } catch (err) {
     console.error("Error fetching testimonials", err);
-    return res.json(
-      DEFAULT_TESTIMONIALS.filter((t) => t && t.enabled).sort(
-        (a, b) => (a.id || 0) - (b.id || 0),
-      ),
-    );
+    return res.json(DEFAULT_TESTIMONIALS.filter((t) => t && t.enabled).sort((a, b) => (a.id || 0) - (b.id || 0)));
   }
 });
 
 // Admin: list testimonials (all)
-app.get(
-  "/api/admin/testimonials",
-  authMiddleware,
-  adminMiddleware,
-  async (req, res) => {
-    try {
-      const items = await Testimonial.find().sort({ id: 1 }).lean();
-      return res.json({ items });
-    } catch (err) {
-      console.error("Error listing testimonials", err);
-      return res.status(500).json({ error: "Internal server error" });
-    }
-  },
-);
+app.get("/api/admin/testimonials", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const items = await Testimonial.find().sort({ id: 1 }).lean();
+    return res.json({ items });
+  } catch (err) {
+    console.error("Error listing testimonials", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 // Admin: create testimonial
-app.post(
-  "/api/admin/testimonials",
-  authMiddleware,
-  adminMiddleware,
-  async (req, res) => {
-    try {
-      const name = String(req.body?.name || "").trim();
-      const title = String(req.body?.title || "").trim();
-      const ratingRaw = Number(req.body?.rating ?? 5);
-      const rating = Math.min(
-        5,
-        Math.max(1, Number.isFinite(ratingRaw) ? ratingRaw : 5),
-      );
-      const text = String(req.body?.text || "").trim();
-      const mainImageUrl = String(req.body?.mainImageUrl || "").trim();
-      const productTitle = String(req.body?.productTitle || "").trim();
-      const productHref = String(req.body?.productHref || "").trim();
-      const productImageUrl = String(req.body?.productImageUrl || "").trim();
-      const enabled =
-        req.body?.enabled === undefined ? true : Boolean(req.body.enabled);
+app.post("/api/admin/testimonials", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const name = String(req.body?.name || "").trim();
+    const title = String(req.body?.title || "").trim();
+    const ratingRaw = Number(req.body?.rating ?? 5);
+    const rating = Math.min(5, Math.max(1, Number.isFinite(ratingRaw) ? ratingRaw : 5));
+    const text = String(req.body?.text || "").trim();
+    const mainImageUrl = String(req.body?.mainImageUrl || "").trim();
+    const productTitle = String(req.body?.productTitle || "").trim();
+    const productHref = String(req.body?.productHref || "").trim();
+    const productImageUrl = String(req.body?.productImageUrl || "").trim();
+    const enabled = req.body?.enabled === undefined ? true : Boolean(req.body.enabled);
 
-      if (!name) return res.status(400).json({ error: "name is required" });
-      if (!text) return res.status(400).json({ error: "text is required" });
+    if (!name) return res.status(400).json({ error: "name is required" });
+    if (!text) return res.status(400).json({ error: "text is required" });
 
-      const last = await Testimonial.findOne().sort({ id: -1 }).lean();
-      const nextId = (last?.id != null ? Number(last.id) : 0) + 1;
+    const last = await Testimonial.findOne().sort({ id: -1 }).lean();
+    const nextId = (last?.id != null ? Number(last.id) : 0) + 1;
 
-      const doc = await Testimonial.create({
-        id: nextId,
-        name,
-        title,
-        rating,
-        text,
-        mainImageUrl,
-        productTitle,
-        productHref,
-        productImageUrl,
-        enabled,
-      });
-      return res.json(doc.toObject());
-    } catch (err) {
-      console.error("Error creating testimonial", err);
-      return res.status(500).json({ error: "Internal server error" });
-    }
-  },
-);
+    const doc = await Testimonial.create({
+      id: nextId,
+      name,
+      title,
+      rating,
+      text,
+      mainImageUrl,
+      productTitle,
+      productHref,
+      productImageUrl,
+      enabled,
+    });
+    return res.json(doc.toObject());
+  } catch (err) {
+    console.error("Error creating testimonial", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 // Admin: update testimonial (by numeric id)
-app.put(
-  "/api/admin/testimonials/:id",
-  authMiddleware,
-  adminMiddleware,
-  async (req, res) => {
-    try {
-      const id = Number(req.params.id);
-      if (!Number.isFinite(id))
-        return res.status(400).json({ error: "Invalid testimonial id" });
+app.put("/api/admin/testimonials/:id", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid testimonial id" });
 
-      const patch = {};
-      if (req.body?.name !== undefined)
-        patch.name = String(req.body.name || "").trim();
-      if (req.body?.title !== undefined)
-        patch.title = String(req.body.title || "").trim();
-      if (req.body?.text !== undefined)
-        patch.text = String(req.body.text || "").trim();
-      if (req.body?.mainImageUrl !== undefined)
-        patch.mainImageUrl = String(req.body.mainImageUrl || "").trim();
-      if (req.body?.productTitle !== undefined)
-        patch.productTitle = String(req.body.productTitle || "").trim();
-      if (req.body?.productHref !== undefined)
-        patch.productHref = String(req.body.productHref || "").trim();
-      if (req.body?.productImageUrl !== undefined)
-        patch.productImageUrl = String(req.body.productImageUrl || "").trim();
-      if (req.body?.enabled !== undefined)
-        patch.enabled = Boolean(req.body.enabled);
-      if (req.body?.rating !== undefined) {
-        const r = Number(req.body.rating);
-        patch.rating = Math.min(5, Math.max(1, Number.isFinite(r) ? r : 5));
-      }
-
-      if (patch.name !== undefined && !patch.name)
-        return res.status(400).json({ error: "name is required" });
-      if (patch.text !== undefined && !patch.text)
-        return res.status(400).json({ error: "text is required" });
-
-      const updated = await Testimonial.findOneAndUpdate(
-        { id },
-        { $set: patch },
-        { new: true },
-      ).lean();
-      if (!updated)
-        return res.status(404).json({ error: "Testimonial not found" });
-      return res.json(updated);
-    } catch (err) {
-      console.error("Error updating testimonial", err);
-      return res.status(500).json({ error: "Internal server error" });
+    const patch = {};
+    if (req.body?.name !== undefined) patch.name = String(req.body.name || "").trim();
+    if (req.body?.title !== undefined) patch.title = String(req.body.title || "").trim();
+    if (req.body?.text !== undefined) patch.text = String(req.body.text || "").trim();
+    if (req.body?.mainImageUrl !== undefined) patch.mainImageUrl = String(req.body.mainImageUrl || "").trim();
+    if (req.body?.productTitle !== undefined) patch.productTitle = String(req.body.productTitle || "").trim();
+    if (req.body?.productHref !== undefined) patch.productHref = String(req.body.productHref || "").trim();
+    if (req.body?.productImageUrl !== undefined) patch.productImageUrl = String(req.body.productImageUrl || "").trim();
+    if (req.body?.enabled !== undefined) patch.enabled = Boolean(req.body.enabled);
+    if (req.body?.rating !== undefined) {
+      const r = Number(req.body.rating);
+      patch.rating = Math.min(5, Math.max(1, Number.isFinite(r) ? r : 5));
     }
-  },
-);
+
+    if (patch.name !== undefined && !patch.name) return res.status(400).json({ error: "name is required" });
+    if (patch.text !== undefined && !patch.text) return res.status(400).json({ error: "text is required" });
+
+    const updated = await Testimonial.findOneAndUpdate({ id }, { $set: patch }, { new: true }).lean();
+    if (!updated) return res.status(404).json({ error: "Testimonial not found" });
+    return res.json(updated);
+  } catch (err) {
+    console.error("Error updating testimonial", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 // Admin: delete testimonial (by numeric id)
-app.delete(
-  "/api/admin/testimonials/:id",
-  authMiddleware,
-  adminMiddleware,
-  async (req, res) => {
-    try {
-      const id = Number(req.params.id);
-      if (!Number.isFinite(id))
-        return res.status(400).json({ error: "Invalid testimonial id" });
-      const deleted = await Testimonial.findOneAndDelete({ id }).lean();
-      if (!deleted)
-        return res.status(404).json({ error: "Testimonial not found" });
-      return res.json({ ok: true, deletedId: id });
-    } catch (err) {
-      console.error("Error deleting testimonial", err);
-      return res.status(500).json({ error: "Internal server error" });
-    }
-  },
-);
+app.delete("/api/admin/testimonials/:id", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid testimonial id" });
+    const deleted = await Testimonial.findOneAndDelete({ id }).lean();
+    if (!deleted) return res.status(404).json({ error: "Testimonial not found" });
+    return res.json({ ok: true, deletedId: id });
+  } catch (err) {
+    console.error("Error deleting testimonial", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 // Admin: reorder testimonials (set id based on order)
-app.put(
-  "/api/admin/testimonials/reorder",
-  authMiddleware,
-  adminMiddleware,
-  async (req, res) => {
-    try {
-      const items = Array.isArray(req.body?.items) ? req.body.items : [];
-      const ids = items
-        .map((it) => Number(it?.id))
-        .filter((n) => Number.isFinite(n));
-      if (!ids.length)
-        return res.status(400).json({ error: "items is required" });
+app.put("/api/admin/testimonials/reorder", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    const ids = items
+      .map((it) => Number(it?.id))
+      .filter((n) => Number.isFinite(n));
+    if (!ids.length) return res.status(400).json({ error: "items is required" });
 
-      // Update each testimonial to sequential id (1..n)
-      const bulk = ids.map((oldId, idx) => ({
-        updateOne: {
-          filter: { id: oldId },
-          update: { $set: { id: idx + 1 } },
-        },
-      }));
-      await Testimonial.bulkWrite(bulk);
-      const updated = await Testimonial.find().sort({ id: 1 }).lean();
-      return res.json({ ok: true, items: updated });
-    } catch (err) {
-      console.error("Error reordering testimonials", err);
-      return res.status(500).json({ error: "Internal server error" });
-    }
-  },
-);
+    // Update each testimonial to sequential id (1..n)
+    const bulk = ids.map((oldId, idx) => ({
+      updateOne: {
+        filter: { id: oldId },
+        update: { $set: { id: idx + 1 } },
+      },
+    }));
+    await Testimonial.bulkWrite(bulk);
+    const updated = await Testimonial.find().sort({ id: 1 }).lean();
+    return res.json({ ok: true, items: updated });
+  } catch (err) {
+    console.error("Error reordering testimonials", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 // ─── Admin: Collection header slides ───────────────────────────────────────
 app.get(
@@ -1648,11 +1385,7 @@ app.get(
   async (req, res) => {
     try {
       if (mongoose.connection.readyState !== 1 || !mongoose.connection.db) {
-        return res.json({
-          items: DEFAULT_COLLECTION_HEADER_SLIDES.slice().sort(
-            (a, b) => (a.id || 0) - (b.id || 0),
-          ),
-        });
+        return res.json({ items: DEFAULT_COLLECTION_HEADER_SLIDES.slice().sort((a, b) => (a.id || 0) - (b.id || 0)) });
       }
       await seedCollectionHeaderSlidesIfEmpty();
       const items = await CollectionHeaderSlide.find().sort({ id: 1 }).lean();
@@ -1676,16 +1409,12 @@ app.post(
       const title = String(req.body?.title || "").trim();
       const description = String(req.body?.description || "").trim();
       const imageUrl = String(req.body?.imageUrl || "").trim();
-      const enabled =
-        req.body?.enabled === undefined ? true : Boolean(req.body.enabled);
+      const enabled = req.body?.enabled === undefined ? true : Boolean(req.body.enabled);
 
       if (!title) return res.status(400).json({ error: "title is required" });
-      if (!imageUrl)
-        return res.status(400).json({ error: "imageUrl is required" });
+      if (!imageUrl) return res.status(400).json({ error: "imageUrl is required" });
 
-      const last = await CollectionHeaderSlide.findOne()
-        .sort({ id: -1 })
-        .lean();
+      const last = await CollectionHeaderSlide.findOne().sort({ id: -1 }).lean();
       const nextId = (last?.id != null ? Number(last.id) : 0) + 1;
 
       const doc = await CollectionHeaderSlide.create({
@@ -1713,23 +1442,16 @@ app.put(
         return res.status(503).json({ error: "Database not connected" });
       }
       const id = Number(req.params.id);
-      if (!Number.isFinite(id))
-        return res.status(400).json({ error: "Invalid slide id" });
+      if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid slide id" });
 
       const patch = {};
-      if (req.body?.title !== undefined)
-        patch.title = String(req.body.title || "").trim();
-      if (req.body?.description !== undefined)
-        patch.description = String(req.body.description || "").trim();
-      if (req.body?.imageUrl !== undefined)
-        patch.imageUrl = String(req.body.imageUrl || "").trim();
-      if (req.body?.enabled !== undefined)
-        patch.enabled = Boolean(req.body.enabled);
+      if (req.body?.title !== undefined) patch.title = String(req.body.title || "").trim();
+      if (req.body?.description !== undefined) patch.description = String(req.body.description || "").trim();
+      if (req.body?.imageUrl !== undefined) patch.imageUrl = String(req.body.imageUrl || "").trim();
+      if (req.body?.enabled !== undefined) patch.enabled = Boolean(req.body.enabled);
 
-      if (patch.title !== undefined && !patch.title)
-        return res.status(400).json({ error: "title is required" });
-      if (patch.imageUrl !== undefined && !patch.imageUrl)
-        return res.status(400).json({ error: "imageUrl is required" });
+      if (patch.title !== undefined && !patch.title) return res.status(400).json({ error: "title is required" });
+      if (patch.imageUrl !== undefined && !patch.imageUrl) return res.status(400).json({ error: "imageUrl is required" });
 
       const updated = await CollectionHeaderSlide.findOneAndUpdate(
         { id },
@@ -1755,11 +1477,8 @@ app.delete(
         return res.status(503).json({ error: "Database not connected" });
       }
       const id = Number(req.params.id);
-      if (!Number.isFinite(id))
-        return res.status(400).json({ error: "Invalid slide id" });
-      const deleted = await CollectionHeaderSlide.findOneAndDelete({
-        id,
-      }).lean();
+      if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid slide id" });
+      const deleted = await CollectionHeaderSlide.findOneAndDelete({ id }).lean();
       if (!deleted) return res.status(404).json({ error: "Slide not found" });
       return res.json({ ok: true, deletedId: id });
     } catch (err) {
@@ -1782,8 +1501,7 @@ app.put(
       const ids = items
         .map((it) => Number(it?.id))
         .filter((n) => Number.isFinite(n));
-      if (!ids.length)
-        return res.status(400).json({ error: "items is required" });
+      if (!ids.length) return res.status(400).json({ error: "items is required" });
 
       const bulk = ids.map((oldId, idx) => ({
         updateOne: { filter: { id: oldId }, update: { $set: { id: idx + 1 } } },
@@ -1852,12 +1570,9 @@ app.get("/api/social-gallery", async (req, res) => {
       const img0 = v0 && Array.isArray(v0.images) ? v0.images[0] : null;
       if (!img0) return;
 
-      const cats =
-        Array.isArray(p.categoryIds) && p.categoryIds.length
-          ? p.categoryIds
-          : p.categoryId != null
-            ? [p.categoryId]
-            : [];
+      const cats = Array.isArray(p.categoryIds) && p.categoryIds.length
+        ? p.categoryIds
+        : (p.categoryId != null ? [p.categoryId] : []);
       const catKey = cats.map((c) => String(c)).join(",") || "none";
       if (seenCats.has(catKey)) return;
       seenCats.add(catKey);
@@ -1911,8 +1626,15 @@ app.get("/api/social-gallery", async (req, res) => {
 app.put("/api/filter-promo", async (req, res) => {
   try {
     const key = "collectionFilters";
-    const { enabled, badgeText, title, ctaText, ctaHref, imageUrl, imageAlt } =
-      req.body || {};
+    const {
+      enabled,
+      badgeText,
+      title,
+      ctaText,
+      ctaHref,
+      imageUrl,
+      imageAlt,
+    } = req.body || {};
 
     const patch = {};
     if (typeof enabled === "boolean") patch.enabled = enabled;
@@ -1937,59 +1659,72 @@ app.put("/api/filter-promo", async (req, res) => {
 });
 
 // Admin: read filter promo
-app.get("/api/admin/filter-promo", async (req, res) => {
-  try {
-    const key = "collectionFilters";
-    let doc = await FilterPromo.findOne({ key }).lean();
-    if (!doc) {
-      doc = (
-        await FilterPromo.create({
-          key,
-          enabled: true,
-          badgeText: "Online Exclusive",
-          title: "SALE UP TO 25% OFF",
-          ctaText: "Shop The Sale",
-          ctaHref: "#",
-          imageUrl: "",
-          imageAlt: "Promotion",
-        })
-      ).toObject();
+app.get(
+  "/api/admin/filter-promo",
+  async (req, res) => {
+    try {
+      const key = "collectionFilters";
+      let doc = await FilterPromo.findOne({ key }).lean();
+      if (!doc) {
+        doc = (
+          await FilterPromo.create({
+            key,
+            enabled: true,
+            badgeText: "Online Exclusive",
+            title: "SALE UP TO 25% OFF",
+            ctaText: "Shop The Sale",
+            ctaHref: "#",
+            imageUrl: "",
+            imageAlt: "Promotion",
+          })
+        ).toObject();
+      }
+      return res.json({ promo: doc });
+    } catch (err) {
+      console.error("Error fetching admin filter promo", err);
+      return res.status(500).json({ error: "Internal server error" });
     }
-    return res.json({ promo: doc });
-  } catch (err) {
-    console.error("Error fetching admin filter promo", err);
-    return res.status(500).json({ error: "Internal server error" });
-  }
-});
+  },
+);
 
 // Admin: update filter promo
-app.put("/api/admin/filter-promo", async (req, res) => {
-  try {
-    const key = "collectionFilters";
-    const { enabled, badgeText, title, ctaText, ctaHref, imageUrl, imageAlt } =
-      req.body || {};
+app.put(
+  "/api/admin/filter-promo",
+  async (req, res) => {
+    try {
+      const key = "collectionFilters";
+      const {
+        enabled,
+        badgeText,
+        title,
+        ctaText,
+        ctaHref,
+        imageUrl,
+        imageAlt,
+      } = req.body || {};
 
-    const patch = {};
-    if (typeof enabled === "boolean") patch.enabled = enabled;
-    if (badgeText !== undefined) patch.badgeText = String(badgeText || "");
-    if (title !== undefined) patch.title = String(title || "");
-    if (ctaText !== undefined) patch.ctaText = String(ctaText || "");
-    if (ctaHref !== undefined) patch.ctaHref = String(ctaHref || "");
-    if (imageUrl !== undefined) patch.imageUrl = String(imageUrl || "");
-    if (imageAlt !== undefined) patch.imageAlt = String(imageAlt || "");
+      const patch = {};
+      if (typeof enabled === "boolean") patch.enabled = enabled;
+      if (badgeText !== undefined) patch.badgeText = String(badgeText || "");
+      if (title !== undefined) patch.title = String(title || "");
+      if (ctaText !== undefined) patch.ctaText = String(ctaText || "");
+      if (ctaHref !== undefined) patch.ctaHref = String(ctaHref || "");
+      if (imageUrl !== undefined) patch.imageUrl = String(imageUrl || "");
+      if (imageAlt !== undefined) patch.imageAlt = String(imageAlt || "");
 
-    const updated = await FilterPromo.findOneAndUpdate(
-      { key },
-      { $set: { key, ...patch } },
-      { upsert: true, new: true },
-    ).lean();
+      const updated = await FilterPromo.findOneAndUpdate(
+        { key },
+        { $set: { key, ...patch } },
+        { upsert: true, new: true },
+      ).lean();
 
-    return res.json({ promo: updated, message: "Filter promo updated" });
-  } catch (err) {
-    console.error("Error updating filter promo", err);
-    return res.status(500).json({ error: "Internal server error" });
-  }
-});
+      return res.json({ promo: updated, message: "Filter promo updated" });
+    } catch (err) {
+      console.error("Error updating filter promo", err);
+      return res.status(500).json({ error: "Internal server error" });
+    }
+  },
+);
 
 // Admin API: create a new slider slide in DB
 app.post("/api/admin/slider", async (req, res) => {
@@ -2041,12 +1776,8 @@ app.put("/api/admin/slider/:id", async (req, res) => {
       return res.status(400).json({ error: "Invalid slider id" });
     }
 
-    const {
-      title,
-      subtitle,
-      imageUrl,
-      categoryId: rawCategoryId,
-    } = req.body || {};
+    const { title, subtitle, imageUrl, categoryId: rawCategoryId } =
+      req.body || {};
 
     if (
       !title ||
@@ -2110,18 +1841,14 @@ app.get("/api/categories", async (req, res) => {
     const withCounts = await attachLiveProductCounts(categories);
     const wantsSplit =
       String(req.query?.split || "").trim() === "1" ||
-      String(req.query?.split || "")
-        .trim()
-        .toLowerCase() === "true";
+      String(req.query?.split || "").trim().toLowerCase() === "true";
     if (!wantsSplit) {
       return res.json(withCounts);
     }
 
     // Split root categories into 2 groups for Shop By Categories UI.
     // Configure via env `SHOP_CATEGORIES_PRIMARY_IDS="1,2,3"` (numeric ids).
-    const rawPrimary = String(
-      process.env.SHOP_CATEGORIES_PRIMARY_IDS || "",
-    ).trim();
+    const rawPrimary = String(process.env.SHOP_CATEGORIES_PRIMARY_IDS || "").trim();
     const primaryIdSet = new Set(
       rawPrimary
         ? rawPrimary
@@ -2135,8 +1862,7 @@ app.get("/api/categories", async (req, res) => {
       Math.min(parseInt(String(req.query?.primaryLimit || ""), 10) || 6, 30),
     );
 
-    const isRoot = (c) =>
-      c == null || c.parentId == null || c.parentId === undefined;
+    const isRoot = (c) => c == null || c.parentId == null || c.parentId === undefined;
     const rootsSorted = withCounts
       .filter(isRoot)
       .slice()
@@ -2148,17 +1874,13 @@ app.get("/api/categories", async (req, res) => {
     const primaryRoots = primaryIdSet.size
       ? rootsSorted.filter((c) => primaryIdSet.has(Number(c.id)))
       : rootsSorted.slice(0, primaryLimit);
-    const primaryRootIds = new Set(
-      primaryRoots.map((c) => Number(c.id)).filter((n) => Number.isFinite(n)),
-    );
+    const primaryRootIds = new Set(primaryRoots.map((c) => Number(c.id)).filter((n) => Number.isFinite(n)));
 
     const enriched = withCounts.map((c) => {
       if (!isRoot(c)) return c;
       const idNum = Number(c.id);
       const splitGroup =
-        Number.isFinite(idNum) && primaryRootIds.has(idNum)
-          ? "primary"
-          : "secondary";
+        Number.isFinite(idNum) && primaryRootIds.has(idNum) ? "primary" : "secondary";
       return { ...c, splitGroup };
     });
     return res.json(enriched);
@@ -2224,7 +1946,8 @@ app.post("/api/admin/categories", async (req, res) => {
 
     // Auto-generate incremental numeric id so the unique index on `id` never gets null
     const last = await Category.findOne().sort({ id: -1 }).lean();
-    const nextId = (last && typeof last.id === "number" ? last.id : 0) + 1;
+    const nextId =
+      (last && typeof last.id === "number" ? last.id : 0) + 1;
 
     const categoryDoc = await Category.create({
       id: nextId,
@@ -2235,7 +1958,9 @@ app.post("/api/admin/categories", async (req, res) => {
       sortOrder,
     });
 
-    const [enriched] = await attachLiveProductCounts([categoryDoc.toObject()]);
+    const [enriched] = await attachLiveProductCounts([
+      categoryDoc.toObject(),
+    ]);
     return res.status(201).json(enriched);
   } catch (err) {
     console.error("Error inserting category", err);
@@ -2278,7 +2003,8 @@ app.put("/api/admin/categories/:id", async (req, res) => {
       imageStr =
         image != null && image !== undefined ? String(image).trim() : "";
     } else {
-      imageStr = existing.image != null ? String(existing.image).trim() : "";
+      imageStr =
+        existing.image != null ? String(existing.image).trim() : "";
     }
     update.image = imageStr;
 
@@ -2298,13 +2024,9 @@ app.put("/api/admin/categories/:id", async (req, res) => {
           return res.status(400).json({ error: "Invalid parentId" });
         }
         if (newParent === categoryId) {
-          return res
-            .status(400)
-            .json({ error: "Category cannot be its own parent" });
+          return res.status(400).json({ error: "Category cannot be its own parent" });
         }
-        const childCount = await Category.countDocuments({
-          parentId: categoryId,
-        });
+        const childCount = await Category.countDocuments({ parentId: categoryId });
         if (childCount > 0) {
           return res.status(400).json({
             error:
@@ -2322,7 +2044,8 @@ app.put("/api/admin/categories/:id", async (req, res) => {
       effectiveParentId = newParent;
     }
 
-    const isRoot = effectiveParentId == null || effectiveParentId === undefined;
+    const isRoot =
+      effectiveParentId == null || effectiveParentId === undefined;
     if (isRoot && !imageStr) {
       return res.status(400).json({
         error: "Image is required for top-level categories",
@@ -2573,25 +2296,16 @@ app.get("/api/search/suggest", async (req, res) => {
       for (const v of variants) {
         const primaryLabel = String(v?.color || "").trim();
         const extras = Array.isArray(v?.colors) ? v.colors : [];
-        const all = [primaryLabel, ...extras]
-          .map((x) => String(x || "").trim())
-          .filter(Boolean);
+        const all = [primaryLabel, ...extras].map((x) => String(x || "").trim()).filter(Boolean);
         for (const label of all) {
           // Only suggest colors that match the user's query (case-insensitive)
           if (!rx.test(label)) continue;
           const key = normalizeCatalogColorNameKey(label);
           if (!key) continue;
-          const row = colorsMap.get(key) || {
-            labels: new Set(),
-            codes: new Set(),
-            productIds: new Set(),
-          };
+          const row = colorsMap.get(key) || { labels: new Set(), codes: new Set(), productIds: new Set() };
           row.labels.add(label);
           // only attach the code when this label is the primary variant color
-          if (
-            primaryLabel &&
-            normalizeCatalogColorNameKey(primaryLabel) === key
-          ) {
+          if (primaryLabel && normalizeCatalogColorNameKey(primaryLabel) === key) {
             const code = String(v?.colorCode || "").trim();
             if (code) row.codes.add(code);
           }
@@ -2615,25 +2329,19 @@ app.get("/api/search/suggest", async (req, res) => {
     if (colors.length) {
       for (const doc of Array.isArray(colorDocs) ? colorDocs : []) {
         const variants = Array.isArray(doc?.variants) ? doc.variants : [];
-        const cats =
-          Array.isArray(doc?.categoryIds) && doc.categoryIds.length
-            ? doc.categoryIds
-            : doc?.categoryId != null
-              ? [doc.categoryId]
-              : [];
+        const cats = Array.isArray(doc?.categoryIds) && doc.categoryIds.length
+          ? doc.categoryIds
+          : doc?.categoryId != null
+            ? [doc.categoryId]
+            : [];
         if (!cats.length) continue;
         // Only include categories from variants that match the query regex.
         let matches = false;
         for (const v of variants) {
           const primaryLabel = String(v?.color || "").trim();
           const extras = Array.isArray(v?.colors) ? v.colors : [];
-          const all = [primaryLabel, ...extras]
-            .map((x) => String(x || "").trim())
-            .filter(Boolean);
-          if (all.some((lbl) => rx.test(lbl))) {
-            matches = true;
-            break;
-          }
+          const all = [primaryLabel, ...extras].map((x) => String(x || "").trim()).filter(Boolean);
+          if (all.some((lbl) => rx.test(lbl))) { matches = true; break; }
         }
         if (!matches) continue;
         for (const cid of cats) {
@@ -2645,12 +2353,8 @@ app.get("/api/search/suggest", async (req, res) => {
 
     let mergedCategories = categories;
     if (extraCategoryIds.size) {
-      const existing = new Set(
-        categories.map((c) => Number(c?.id)).filter((n) => Number.isFinite(n)),
-      );
-      const want = Array.from(extraCategoryIds).filter(
-        (id) => !existing.has(id),
-      );
+      const existing = new Set(categories.map((c) => Number(c?.id)).filter((n) => Number.isFinite(n)));
+      const want = Array.from(extraCategoryIds).filter((id) => !existing.has(id));
       if (want.length) {
         const extraCats = await Category.find({ id: { $in: want } })
           .sort({ sortOrder: 1, parentId: 1, title: 1 })
@@ -2846,9 +2550,7 @@ app.post("/api/recently-viewed/add", async (req, res) => {
   try {
     const { userId, productId, title, slug, price, image } = req.body || {};
     if (!userId || !productId || !title) {
-      return res
-        .status(400)
-        .json({ error: "userId, productId and title are required" });
+      return res.status(400).json({ error: "userId, productId and title are required" });
     }
 
     const uid = String(userId);
@@ -2910,11 +2612,7 @@ app.post("/api/recently-viewed/list", async (req, res) => {
     // shape as /api/admin/catalog-products/search (variants, images, etc.)
     const productIds = rvItems
       .map((it) => {
-        try {
-          return new mongoose.Types.ObjectId(it.productId);
-        } catch {
-          return null;
-        }
+        try { return new mongoose.Types.ObjectId(it.productId); } catch { return null; }
       })
       .filter(Boolean);
 
@@ -2931,15 +2629,14 @@ app.post("/api/recently-viewed/list", async (req, res) => {
       // Merge catalog data with saved RV data so incomplete catalog entries
       // (price=0, missing variants) still show the correct saved price/image
       const hasPrice = full.price && Number(full.price) > 0;
-      const hasVariants =
-        Array.isArray(full.variants) && full.variants.length > 0;
+      const hasVariants = Array.isArray(full.variants) && full.variants.length > 0;
 
       return {
         ...full,
         _id: full._id,
         viewedAt: it.viewedAt,
         // Use saved price when catalog has none
-        price: hasPrice ? full.price : it.price || 0,
+        price: hasPrice ? full.price : (it.price || 0),
         discountPrice: full.discountPrice ?? undefined,
         // Keep the saved image as a top-level fallback for the frontend
         image: it.image || full.image,
@@ -2947,8 +2644,8 @@ app.post("/api/recently-viewed/list", async (req, res) => {
         variants: hasVariants
           ? full.variants
           : it.image
-            ? [{ color: "", colorCode: "", images: [it.image], sizes: [] }]
-            : [],
+          ? [{ color: "", colorCode: "", images: [it.image], sizes: [] }]
+          : [],
       };
     });
 
@@ -3007,19 +2704,61 @@ const couponSchema = new mongoose.Schema(
     value: { type: Number, required: true, min: 0 },
     minSubtotal: { type: Number, default: 0, min: 0 },
     maxDiscount: { type: Number, default: 0, min: 0 }, // only for percent (0 = no cap)
+    applicableOn: { type: String, enum: ["all", "prepaid", "cod"], default: "all" },
+    applicableCategories: { type: [String], default: [] },
     isActive: { type: Boolean, default: true },
-    applicableOn: {
-      type: String,
-      enum: ["all", "prepaid", "cod"],
-      default: "all",
-    },
-    applicableCategories: [{ type: String, trim: true }],
     expiresAt: { type: Date },
   },
   { timestamps: true },
 );
 
 const Coupon = mongoose.model("Coupon", couponSchema, "coupons");
+
+function normalizeCouponPaymentScope(value) {
+  const normalized = String(value || "all").trim().toLowerCase();
+  if (normalized === "online" || normalized === "prepaid") return "prepaid";
+  if (normalized === "cod") return "cod";
+  return "all";
+}
+async function getCouponCategoryMatch(coupon, items, session) {
+  const requiredCategories = (Array.isArray(coupon?.applicableCategories)
+    ? coupon.applicableCategories
+    : [])
+    .map((category) => String(category).trim())
+    .filter(Boolean);
+  const subtotal = (items || []).reduce(
+    (sum, item) => sum + Number(item?.price || 0) * Number(item?.quantity || 1),
+    0,
+  );
+  if (!requiredCategories.length) return { matches: true, subtotal };
+
+  const productIds = [...new Set((items || [])
+    .map((item) => String(item?.productId || "").trim())
+    .filter((id) => mongoose.isValidObjectId(id)))];
+  const query = CatalogProduct.find({ _id: { $in: productIds } })
+    .select({ categoryIds: 1, categoryId: 1 })
+    .lean();
+  if (session) query.session(session);
+  const products = await query;
+  const productMap = new Map(products.map((product) => [String(product._id), product]));
+  const matchingItems = (items || []).filter((item) => {
+    const product = productMap.get(String(item?.productId || ""));
+    const categories = Array.isArray(product?.categoryIds) && product.categoryIds.length
+      ? product.categoryIds
+      : product?.categoryId != null
+        ? [product.categoryId]
+        : [];
+    return categories.some((category) => requiredCategories.includes(String(category)));
+  });
+
+  return {
+    matches: matchingItems.length > 0,
+    subtotal: matchingItems.reduce(
+      (sum, item) => sum + Number(item?.price || 0) * Number(item?.quantity || 1),
+      0,
+    ),
+  };
+}
 
 // Coupon redemption (one-time per user)
 const couponRedemptionSchema = new mongoose.Schema(
@@ -3046,11 +2785,7 @@ const siteSettingSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
-const SiteSetting = mongoose.model(
-  "SiteSetting",
-  siteSettingSchema,
-  "site_settings",
-);
+const SiteSetting = mongoose.model("SiteSetting", siteSettingSchema, "site_settings");
 
 // Order schema/model (created during checkout)
 const orderSchema = new mongoose.Schema(
@@ -3133,9 +2868,7 @@ const PaymentEvent = mongoose.model(
 );
 
 function computeShipping({ country, subtotal }) {
-  const c = String(country || "")
-    .trim()
-    .toLowerCase();
+  const c = String(country || "").trim().toLowerCase();
   const sub = Number(subtotal || 0);
   const isIndia = c === "india" || c === "in" || c.includes("india");
   let shipping = isIndia ? 49 : 199;
@@ -3144,9 +2877,7 @@ function computeShipping({ country, subtotal }) {
 }
 
 function computeEtaDays(country) {
-  const c = String(country || "")
-    .trim()
-    .toLowerCase();
+  const c = String(country || "").trim().toLowerCase();
   const isIndia = c === "india" || c === "in" || c.includes("india");
   return isIndia ? { min: 2, max: 5 } : { min: 5, max: 12 };
 }
@@ -3259,11 +2990,7 @@ function resolveCatalogVariantByColor(productDoc, color) {
     if (byExact) return byExact;
     const cLow = c.toLowerCase();
     const byLow = productDoc.variants.find(
-      (v) =>
-        v &&
-        String(v.color || "")
-          .trim()
-          .toLowerCase() === cLow,
+      (v) => v && String(v.color || "").trim().toLowerCase() === cLow,
     );
     if (byLow) return byLow;
   }
@@ -3274,11 +3001,7 @@ function resolveCatalogVariantByColor(productDoc, color) {
 const INTERNAL_FREE_SIZE_LABEL = "Free Size";
 
 function isInternalFreeSizeLabel(value) {
-  return (
-    String(value ?? "")
-      .trim()
-      .toLowerCase() === "free size"
-  );
+  return String(value ?? "").trim().toLowerCase() === "free size";
 }
 
 function findInternalFreeSizeRow(variant) {
@@ -3441,9 +3164,7 @@ app.post("/api/stock/check", async (req, res) => {
   try {
     const { productId, color, size, quantity } = req.body || {};
     if (!productId || !color) {
-      return res
-        .status(400)
-        .json({ error: "productId and color are required" });
+      return res.status(400).json({ error: "productId and color are required" });
     }
 
     const pid = String(productId);
@@ -3451,16 +3172,12 @@ app.post("/api/stock/check", async (req, res) => {
     const s = size != null ? String(size).trim() : "";
     const reqQty = Math.max(1, Number(quantity) || 1);
 
-    const prod = await CatalogProduct.findById(pid)
-      .select({ _id: 1, variants: 1 })
-      .lean();
+    const prod = await CatalogProduct.findById(pid).select({ _id: 1, variants: 1 }).lean();
     if (!prod) return res.status(404).json({ error: "Product not found" });
 
     const availableStock = computeVariantStock(prod, c, s);
     if (availableStock == null) {
-      return res
-        .status(404)
-        .json({ error: "Variant not found", availableStock: null });
+      return res.status(404).json({ error: "Variant not found", availableStock: null });
     }
 
     const inStock = availableStock > 0 && reqQty <= availableStock;
@@ -3492,26 +3209,23 @@ app.post("/api/cart/validate-stock", async (req, res) => {
     const results = (withStock || []).map((it) => {
       const requestedQty = Math.max(1, Number(it.quantity) || 1);
       const availableStock =
-        it.maxStock != null && Number.isFinite(Number(it.maxStock))
-          ? Math.max(0, Number(it.maxStock))
-          : null;
+        it.maxStock != null && Number.isFinite(Number(it.maxStock)) ? Math.max(0, Number(it.maxStock)) : null;
       // Sized lines need color+size; no-size catalog variants use color only (maxStock still set).
-      const hasVariant = Boolean(it.color && (it.size || it.maxStock != null));
-      const inStock = !hasVariant
-        ? true
-        : availableStock != null
-          ? availableStock > 0 && requestedQty <= availableStock
-          : false;
+      const hasVariant = Boolean(
+        it.color && (it.size || it.maxStock != null),
+      );
+      const inStock =
+        !hasVariant
+          ? true
+          : availableStock != null
+            ? availableStock > 0 && requestedQty <= availableStock
+            : false;
 
       const maxAllowedQty = hasVariant ? availableStock : null;
       const needsQtyReduce =
-        hasVariant && availableStock != null
-          ? requestedQty > availableStock && availableStock > 0
-          : false;
+        hasVariant && availableStock != null ? requestedQty > availableStock && availableStock > 0 : false;
       const suggestedQty =
-        needsQtyReduce && availableStock != null
-          ? Math.max(1, Math.min(requestedQty, availableStock))
-          : requestedQty;
+        needsQtyReduce && availableStock != null ? Math.max(1, Math.min(requestedQty, availableStock)) : requestedQty;
 
       return {
         cartItemId: String(it._id),
@@ -3575,7 +3289,11 @@ app.post("/api/cart", async (req, res) => {
         prod = null;
       }
       if (prod) {
-        maxStock = computeVariantStock(prod, normalizedColor, normalizedSize);
+        maxStock = computeVariantStock(
+          prod,
+          normalizedColor,
+          normalizedSize,
+        );
       }
       if (maxStock != null && maxStock <= 0) {
         return res.status(400).json({ error: "Out of stock", maxStock: 0 });
@@ -3585,24 +3303,19 @@ app.post("/api/cart", async (req, res) => {
     // Atomic upsert: increment qty for same user+product+color+size (prevents duplicate rows)
     const filter =
       normalizedColor && normalizedSize
-        ? {
-            userId: uid,
-            productId: pid,
-            color: normalizedColor,
-            size: normalizedSize,
-          }
+        ? { userId: uid, productId: pid, color: normalizedColor, size: normalizedSize }
         : normalizedColor
           ? {
               userId: uid,
               productId: pid,
               color: normalizedColor,
-              $or: [{ size: { $exists: false } }, { size: null }, { size: "" }],
+              $or: [
+                { size: { $exists: false } },
+                { size: null },
+                { size: "" },
+              ],
             }
-          : {
-              userId: uid,
-              productId: pid,
-              variantId: variantId ? String(variantId) : undefined,
-            };
+          : { userId: uid, productId: pid, variantId: variantId ? String(variantId) : undefined };
 
     const update = {
       $inc: { quantity: qty },
@@ -3613,9 +3326,7 @@ app.post("/api/cart", async (req, res) => {
         image: image,
         variantId: variantId ? String(variantId) : undefined,
         color: normalizedColor || undefined,
-        size: normalizedColor
-          ? normalizedSize || ""
-          : normalizedSize || undefined,
+        size: normalizedColor ? normalizedSize || "" : normalizedSize || undefined,
         productId: pid,
         userId: uid,
       },
@@ -3638,9 +3349,7 @@ app.post("/api/cart", async (req, res) => {
           userId: uid,
           productId: pid,
           color: normalizedColor,
-          size: normalizedColor
-            ? normalizedSize || ""
-            : normalizedSize || undefined,
+          size: normalizedColor ? normalizedSize || "" : normalizedSize || undefined,
           maxStock,
           clamped: true,
           quantity: currentQty || 1,
@@ -3885,11 +3594,7 @@ app.delete("/api/cart", async (req, res) => {
     }
 
     if (!productId) {
-      return res
-        .status(400)
-        .json({
-          error: "productId is required when cartItemId is not provided",
-        });
+      return res.status(400).json({ error: "productId is required when cartItemId is not provided" });
     }
 
     const base = {
@@ -3898,10 +3603,7 @@ app.delete("/api/cart", async (req, res) => {
     };
 
     if (variantId) {
-      const result = await CartItem.deleteOne({
-        ...base,
-        variantId: String(variantId),
-      });
+      const result = await CartItem.deleteOne({ ...base, variantId: String(variantId) });
       return res.json({ deletedCount: result.deletedCount });
     }
 
@@ -3920,9 +3622,7 @@ app.post("/api/cart/update-qty", async (req, res) => {
   try {
     const { userId, cartItemId, quantity } = req.body || {};
     if (!userId || !cartItemId) {
-      return res
-        .status(400)
-        .json({ error: "userId and cartItemId are required" });
+      return res.status(400).json({ error: "userId and cartItemId are required" });
     }
 
     const qty = Math.max(1, Number(quantity) || 1);
@@ -3931,14 +3631,7 @@ app.post("/api/cart/update-qty", async (req, res) => {
       _id: String(cartItemId),
       userId: String(userId),
     })
-      .select({
-        _id: 1,
-        userId: 1,
-        productId: 1,
-        color: 1,
-        size: 1,
-        quantity: 1,
-      })
+      .select({ _id: 1, userId: 1, productId: 1, color: 1, size: 1, quantity: 1 })
       .lean();
 
     if (!existingRow) {
@@ -3952,7 +3645,8 @@ app.post("/api/cart/update-qty", async (req, res) => {
       const prod = await CatalogProduct.findById(rowPid)
         .select({ _id: 1, variants: 1 })
         .lean();
-      const rowSize = existingRow.size != null ? String(existingRow.size) : "";
+      const rowSize =
+        existingRow.size != null ? String(existingRow.size) : "";
       maxStock = computeVariantStock(prod, existingRow.color, rowSize);
     }
 
@@ -4013,18 +3707,9 @@ app.post("/api/addresses/save", async (req, res) => {
       isDefault = false,
     } = req.body || {};
 
-    if (
-      !userId ||
-      !name ||
-      !phone ||
-      !address1 ||
-      !city ||
-      !state ||
-      !pincode
-    ) {
+    if (!userId || !name || !phone || !address1 || !city || !state || !pincode) {
       return res.status(400).json({
-        error:
-          "userId, name, phone, address1, city, state, pincode are required",
+        error: "userId, name, phone, address1, city, state, pincode are required",
       });
     }
 
@@ -4073,9 +3758,7 @@ app.post("/api/addresses/delete", async (req, res) => {
   try {
     const { userId, addressId } = req.body || {};
     if (!userId || !addressId) {
-      return res
-        .status(400)
-        .json({ error: "userId and addressId are required" });
+      return res.status(400).json({ error: "userId and addressId are required" });
     }
 
     const result = await Address.deleteOne({
@@ -4091,35 +3774,42 @@ app.post("/api/addresses/delete", async (req, res) => {
 
 // Coupons: validate
 // POST /api/coupons/validate Body: { code, subtotal, userId? }
-// ---------- VALIDATE ----------
-// POST /api/coupons/validate  Body: { code, subtotal, paymentMethod }
 app.post("/api/coupons/validate", async (req, res) => {
   try {
-    const { code, subtotal, paymentMethod } = req.body || {};
-
+    const { code, subtotal, userId, paymentMethod, items = [] } = req.body || {};
     const c = String(code || "").trim().toUpperCase();
-    if (!c) return res.status(400).json({ error: "Code is required" });
+    const sub = Number(subtotal || 0);
+    if (!c) return res.status(400).json({ error: "code is required" });
+
+    // If userId provided, ensure user hasn't used this coupon already
+    if (userId) {
+      const used = await CouponRedemption.exists({
+        userId: String(userId),
+        code: c,
+      });
+      if (used) return res.status(400).json({ error: "Coupon already used" });
+    }
 
     const coupon = await Coupon.findOne({ code: c, isActive: true }).lean();
     if (!coupon) return res.status(404).json({ error: "Invalid coupon" });
-
+    const couponScope = normalizeCouponPaymentScope(coupon.applicableOn);
+    if (couponScope !== "all" && couponScope !== normalizeCouponPaymentScope(paymentMethod)) {
+      return res.status(400).json({ error: `Coupon is valid only for ${couponScope === "cod" ? "COD" : "online payment"}` });
+    }
+    const categoryMatch = await getCouponCategoryMatch(coupon, items);
+    if (!categoryMatch.matches) {
+      return res.status(400).json({
+        error: "This coupon is only applicable on selected products or categories in your cart.",
+        applicableCategories: coupon.applicableCategories || [],
+      });
+    }
+      discount = (categoryMatch.subtotal * Number(coupon.value || 0)) / 100;
+      discount = Math.max(0, Math.min(discount, categoryMatch.subtotal));
     if (coupon.expiresAt && new Date(coupon.expiresAt).getTime() < Date.now()) {
       return res.status(400).json({ error: "Coupon expired" });
     }
-
-    const sub = Number(subtotal || 0);
     if (sub < Number(coupon.minSubtotal || 0)) {
       return res.status(400).json({ error: `Minimum subtotal ₹${coupon.minSubtotal} required` });
-    }
-
-    // Payment method check — note: Order schema uses "cod" / "online"
-    const pm = String(paymentMethod || "").trim().toLowerCase();
-    const appOn = String(coupon.applicableOn || "all").trim().toLowerCase();
-    if (appOn === "prepaid" && pm !== "online") {
-      return res.status(400).json({ error: "This coupon is only applicable on Prepaid (Online) orders." });
-    }
-    if (appOn === "cod" && pm !== "cod") {
-      return res.status(400).json({ error: "This coupon is only applicable on COD orders." });
     }
 
     let discount = 0;
@@ -4141,77 +3831,22 @@ app.post("/api/coupons/validate", async (req, res) => {
         value: coupon.value,
         minSubtotal: coupon.minSubtotal || 0,
         maxDiscount: coupon.maxDiscount || 0,
+        applicableOn: couponScope,
+        applicableCategories: coupon.applicableCategories || [],
       },
     });
   } catch (err) {
-    console.error("Error validating coupon:", err);
+    console.error("Error validating coupon", err);
     return res.status(500).json({ error: "Internal server error" });
   }
 });
 
 // Coupons: list available (for UI suggestions)
 // POST /api/coupons/list Body: { limit?, userId? }
-// ---------- CREATE ----------
-// POST /api/coupons
-app.post("/api/coupons", async (req, res) => {
-  try {
-    const {
-      code,
-      type,
-      value,
-      minSubtotal,
-      maxDiscount,
-      isActive,
-      applicableOn,
-      applicableCategories,
-      expiresAt,
-    } = req.body || {};
-
-    if (!code)
-      return res.status(400).json({ error: "Coupon code is required" });
-    if (!["percent", "flat"].includes(type)) {
-      return res
-        .status(400)
-        .json({ error: "Valid type (percent/flat) is required" });
-    }
-    if (value === undefined || Number(value) < 0) {
-      return res.status(400).json({ error: "Valid value is required" });
-    }
-
-    const c = String(code).trim().toUpperCase();
-    if (await Coupon.findOne({ code: c })) {
-      return res.status(400).json({ error: "Coupon code already exists" });
-    }
-
-    const allowedModes = ["all", "prepaid", "cod"];
-    const appOn = allowedModes.includes(applicableOn) ? applicableOn : "all";
-
-    const coupon = new Coupon({
-      code: c,
-      type,
-      value: Number(value),
-      minSubtotal: Number(minSubtotal || 0),
-      maxDiscount: Number(maxDiscount || 0),
-      isActive: isActive !== undefined ? Boolean(isActive) : true,
-      applicableOn: appOn,
-      applicableCategories: applicableCategories || [],
-      ...(expiresAt ? { expiresAt: new Date(expiresAt) } : {}),
-    });
-
-    await coupon.save();
-    return res.status(201).json({ item: coupon });
-  } catch (err) {
-    console.error("Error creating coupon:", err);
-    return res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// Coupons: list available (for checkout UI suggestions)
-// POST /api/coupons/list Body: { limit?, userId? }
 app.post("/api/coupons/list", async (req, res) => {
   try {
-    const { limit = 12, userId } = req.body || {};
-    const limitNum = Math.max(parseInt(limit, 10) || 12, 1);
+    const { limit = 10, userId, items: cartItems = [] } = req.body || {};
+    const limitNum = Math.max(parseInt(limit, 10) || 10, 1);
 
     const now = new Date();
     let excludeCodes = [];
@@ -4221,31 +3856,38 @@ app.post("/api/coupons/list", async (req, res) => {
       });
     }
 
-    const query = {
+    const couponItems = await Coupon.find({
       isActive: true,
-      $or: [
-        { expiresAt: { $exists: false } },
-        { expiresAt: null },
-        { expiresAt: { $gte: now } },
-      ],
+      $or: [{ expiresAt: { $exists: false } }, { expiresAt: null }, { expiresAt: { $gte: now } }],
       ...(excludeCodes.length ? { code: { $nin: excludeCodes } } : {}),
-    };
-
-    const items = await Coupon.find(query)
+    })
       .sort({ createdAt: -1 })
       .limit(limitNum)
       .lean();
 
-    const safe = items.map((c) => ({
+    // Keep only safe fields for user UI
+    const categoryIds = [...new Set(couponItems.flatMap((coupon) => (
+      Array.isArray(coupon.applicableCategories) ? coupon.applicableCategories : []
+    )).map((id) => Number(id)).filter((id) => Number.isFinite(id)))];
+    const categoryDocs = categoryIds.length
+      ? await Category.find({ id: { $in: categoryIds } }).select({ id: 1, title: 1 }).lean()
+      : [];
+    const categoryMap = new Map(categoryDocs.map((category) => [String(category.id), category.title]));
+
+    const safe = await Promise.all(couponItems.map(async (c) => ({
       _id: c._id,
       code: c.code,
       type: c.type,
       value: c.value,
       minSubtotal: c.minSubtotal || 0,
       maxDiscount: c.maxDiscount || 0,
-      applicableOn: c.applicableOn || "all",
+      applicableOn: normalizeCouponPaymentScope(c.applicableOn),
+      applicableCategories: Array.isArray(c.applicableCategories) ? c.applicableCategories : [],
+      applicableCategoryLabels: (Array.isArray(c.applicableCategories) ? c.applicableCategories : [])
+        .map((id) => categoryMap.get(String(id)) || `Category ${id}`),
+      applicableToCart: (await getCouponCategoryMatch(c, cartItems)).matches,
       expiresAt: c.expiresAt || null,
-    }));
+    })));
 
     return res.json({ items: safe });
   } catch (err) {
@@ -4271,109 +3913,101 @@ app.post("/api/orders/list", async (req, res) => {
 });
 
 // Admin: list all orders
-app.get(
-  "/api/admin/orders",
-  authMiddleware,
-  adminMiddleware,
-  async (req, res) => {
-    try {
-      const items = await Order.find({}).sort({ createdAt: -1 }).lean();
-      return res.json({ items });
-    } catch (err) {
-      console.error("Admin list orders error:", err);
-      return res.status(500).json({ error: "Internal server error" });
-    }
-  },
-);
+app.get("/api/admin/orders", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const items = await Order.find({})
+      .sort({ createdAt: -1 })
+      .lean();
+    return res.json({ items });
+  } catch (err) {
+    console.error("Admin list orders error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 // Admin: update an order (status/payment/shipping info)
 // PATCH /api/admin/orders/:id
 // Body: { status?, paymentStatus?, trackingNumber?, carrier?, cancelReason? }
-app.patch(
-  "/api/admin/orders/:id",
-  authMiddleware,
-  adminMiddleware,
-  async (req, res) => {
-    try {
-      const id = String(req.params.id || "").trim();
-      if (!id) return res.status(400).json({ error: "id is required" });
+app.patch("/api/admin/orders/:id", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || "").trim();
+    if (!id) return res.status(400).json({ error: "id is required" });
 
-      const { status, paymentStatus, trackingNumber, carrier, cancelReason } =
-        req.body || {};
+    const {
+      status,
+      paymentStatus,
+      trackingNumber,
+      carrier,
+      cancelReason,
+    } = req.body || {};
 
-      const patch = {};
-      const now = new Date();
+    const patch = {};
+    const now = new Date();
 
-      const allowedStatus = new Set([
-        "created",
-        "confirmed",
-        "processing",
-        "shipped",
-        "delivered",
-        "cancelled",
-      ]);
-      const allowedPayment = new Set(["pending", "paid", "failed", "refunded"]);
+    const allowedStatus = new Set([
+      "created",
+      "confirmed",
+      "processing",
+      "shipped",
+      "delivered",
+      "cancelled",
+    ]);
+    const allowedPayment = new Set(["pending", "paid", "failed", "refunded"]);
 
-      if (status != null) {
-        const next = String(status || "")
-          .toLowerCase()
-          .trim();
-        if (!allowedStatus.has(next)) {
-          return res.status(400).json({ error: "Invalid status" });
-        }
-        patch.status = next;
-        if (next === "shipped" && !patch.shippedAt) patch.shippedAt = now;
-        if (next === "delivered" && !patch.deliveredAt) patch.deliveredAt = now;
-        if (next === "processing" && !patch.processingAt)
-          patch.processingAt = now;
-        if (next === "confirmed" && !patch.confirmedAt) patch.confirmedAt = now;
-        if (next === "cancelled") {
-          patch.cancelledAt = now;
-          if (cancelReason != null)
-            patch.cancelReason = String(cancelReason || "").trim();
-        }
+    if (status != null) {
+      const next = String(status || "").toLowerCase().trim();
+      if (!allowedStatus.has(next)) {
+        return res.status(400).json({ error: "Invalid status" });
       }
-
-      if (paymentStatus != null) {
-        const nextPay = String(paymentStatus || "")
-          .toLowerCase()
-          .trim();
-        if (!allowedPayment.has(nextPay)) {
-          return res.status(400).json({ error: "Invalid paymentStatus" });
-        }
-        patch.paymentStatus = nextPay;
-        if (nextPay === "paid") patch.paidAt = now;
-        if (nextPay === "refunded") patch.refundedAt = now;
+      patch.status = next;
+      if (next === "shipped" && !patch.shippedAt) patch.shippedAt = now;
+      if (next === "delivered" && !patch.deliveredAt) patch.deliveredAt = now;
+      if (next === "processing" && !patch.processingAt) patch.processingAt = now;
+      if (next === "confirmed" && !patch.confirmedAt) patch.confirmedAt = now;
+      if (next === "cancelled") {
+        patch.cancelledAt = now;
+        if (cancelReason != null) patch.cancelReason = String(cancelReason || "").trim();
       }
-
-      if (trackingNumber != null)
-        patch.trackingNumber = String(trackingNumber || "").trim();
-      if (carrier != null) patch.carrier = String(carrier || "").trim();
-
-      if (Object.keys(patch).length === 0) {
-        return res.status(400).json({ error: "No valid fields provided" });
-      }
-
-      const updated = await Order.findByIdAndUpdate(
-        id,
-        { $set: patch },
-        { new: true },
-      ).lean();
-
-      if (!updated) return res.status(404).json({ error: "Order not found" });
-      return res.json({ item: updated });
-    } catch (err) {
-      console.error("Admin update order error:", err);
-      return res.status(500).json({ error: "Internal server error" });
     }
-  },
-);
+
+    if (paymentStatus != null) {
+      const nextPay = String(paymentStatus || "").toLowerCase().trim();
+      if (!allowedPayment.has(nextPay)) {
+        return res.status(400).json({ error: "Invalid paymentStatus" });
+      }
+      patch.paymentStatus = nextPay;
+      if (nextPay === "paid") patch.paidAt = now;
+      if (nextPay === "refunded") patch.refundedAt = now;
+    }
+
+    if (trackingNumber != null) patch.trackingNumber = String(trackingNumber || "").trim();
+    if (carrier != null) patch.carrier = String(carrier || "").trim();
+
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ error: "No valid fields provided" });
+    }
+
+    const updated = await Order.findByIdAndUpdate(
+      id,
+      { $set: patch },
+      { new: true },
+    ).lean();
+
+    if (!updated) return res.status(404).json({ error: "Order not found" });
+    return res.json({ item: updated });
+  } catch (err) {
+    console.error("Admin update order error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 // Admin: list coupons
 // POST /api/admin/coupons/list  Body: {}
 app.post("/api/admin/coupons/list", async (req, res) => {
   try {
-    const items = await Coupon.find({}).sort({ createdAt: -1 }).lean();
+    const items = await Coupon.find({})
+      .sort({ createdAt: -1 })
+      .lean();
     return res.json({ items });
   } catch (err) {
     console.error("Error listing coupons", err);
@@ -4393,14 +4027,13 @@ app.post("/api/admin/coupons/create", async (req, res) => {
       minSubtotal = 0,
       maxDiscount = 0,
       isActive = true,
-      applicableOn,
-      applicableCategories,
       expiresAt,
+      applicableOn = "all",
+      applicableCategories = [],
+      paymentMethod,
     } = req.body || {};
 
-    const c = String(code || "")
-      .trim()
-      .toUpperCase();
+    const c = String(code || "").trim().toUpperCase();
     if (!c) return res.status(400).json({ error: "code is required" });
     if (type !== "percent" && type !== "flat") {
       return res.status(400).json({ error: "type must be percent or flat" });
@@ -4410,9 +4043,6 @@ app.post("/api/admin/coupons/create", async (req, res) => {
       return res.status(400).json({ error: "value must be > 0" });
     }
 
-    const allowedModes = ["all", "prepaid", "cod"];
-    const appOn = allowedModes.includes(applicableOn) ? applicableOn : "all";
-
     const couponDoc = await Coupon.create({
       code: c,
       type,
@@ -4420,9 +4050,12 @@ app.post("/api/admin/coupons/create", async (req, res) => {
       minSubtotal: Math.max(0, Number(minSubtotal) || 0),
       maxDiscount: Math.max(0, Number(maxDiscount) || 0),
       isActive: Boolean(isActive),
-      applicableOn: appOn,
-      applicableCategories: applicableCategories || [],
       expiresAt: expiresAt ? new Date(expiresAt) : undefined,
+      applicableOn: normalizeCouponPaymentScope(applicableOn || paymentMethod),
+      applicableCategories: (Array.isArray(applicableCategories) ? applicableCategories : [])
+        .map((category) => String(category).trim())
+        .filter(Boolean)
+        .filter((category, index, categories) => categories.indexOf(category) === index),
     });
 
     return res.status(201).json({ item: couponDoc.toObject() });
@@ -4440,8 +4073,7 @@ app.post("/api/admin/coupons/create", async (req, res) => {
 app.post("/api/admin/coupons/delete", async (req, res) => {
   try {
     const { couponId } = req.body || {};
-    if (!couponId)
-      return res.status(400).json({ error: "couponId is required" });
+    if (!couponId) return res.status(400).json({ error: "couponId is required" });
     const result = await Coupon.deleteOne({ _id: String(couponId) });
     return res.json({ deletedCount: result.deletedCount });
   } catch (err) {
@@ -4456,14 +4088,8 @@ app.post("/api/admin/coupons/delete", async (req, res) => {
 app.post("/api/checkout", async (req, res) => {
   const session = await mongoose.startSession();
   try {
-    const {
-      userId,
-      paymentMethod = "cod",
-      note,
-      couponCode,
-      shippingAddress,
-      payment,
-    } = req.body || {};
+    const { userId, paymentMethod = "cod", note, couponCode, shippingAddress, payment } =
+      req.body || {};
     if (!userId) {
       return res.status(400).json({ error: "userId is required" });
     }
@@ -4512,10 +4138,7 @@ app.post("/api/checkout", async (req, res) => {
     let couponFinal = couponCode ? String(couponCode).trim().toUpperCase() : "";
     if (couponFinal) {
       // one-time coupon per user check (transactional)
-      const alreadyUsed = await CouponRedemption.exists({
-        userId: uid,
-        code: couponFinal,
-      }).session(session);
+      const alreadyUsed = await CouponRedemption.exists({ userId: uid, code: couponFinal }).session(session);
       if (alreadyUsed) {
         throw new Error("Coupon already used");
       }
@@ -4523,17 +4146,21 @@ app.post("/api/checkout", async (req, res) => {
       const coupon = await Coupon.findOne({ code: couponFinal, isActive: true })
         .session(session)
         .lean();
-      if (
-        coupon &&
-        (!coupon.expiresAt ||
-          new Date(coupon.expiresAt).getTime() >= Date.now())
-      ) {
+      if (coupon && (!coupon.expiresAt || new Date(coupon.expiresAt).getTime() >= Date.now())) {
+        const couponScope = normalizeCouponPaymentScope(coupon.applicableOn);
+        if (couponScope !== "all" && couponScope !== normalizeCouponPaymentScope(paymentMethod)) {
+          throw new Error(`Coupon is valid only for ${couponScope === "cod" ? "COD" : "online payment"}`);
+        }
+        const categoryMatch = await getCouponCategoryMatch(coupon, items, session);
+        if (!categoryMatch.matches) {
+          throw new Error("This coupon is only applicable on selected products or categories in your cart.");
+        }
         const minSub = Number(coupon.minSubtotal || 0);
         if (subtotal >= minSub) {
           if (coupon.type === "flat") {
-            discount = Number(coupon.value || 0);
+            discount = Math.min(Number(coupon.value || 0), categoryMatch.subtotal);
           } else {
-            discount = (subtotal * Number(coupon.value || 0)) / 100;
+            discount = (categoryMatch.subtotal * Number(coupon.value || 0)) / 100;
             const cap = Number(coupon.maxDiscount || 0);
             if (cap > 0) discount = Math.min(discount, cap);
           }
@@ -4572,15 +4199,9 @@ app.post("/api/checkout", async (req, res) => {
           paymentDetails: isOnline
             ? {
                 provider: "razorpay",
-                razorpayOrderId: String(
-                  payment?.razorpay_order_id || "",
-                ).trim(),
-                razorpayPaymentId: String(
-                  payment?.razorpay_payment_id || "",
-                ).trim(),
-                razorpaySignature: String(
-                  payment?.razorpay_signature || "",
-                ).trim(),
+                razorpayOrderId: String(payment?.razorpay_order_id || "").trim(),
+                razorpayPaymentId: String(payment?.razorpay_payment_id || "").trim(),
+                razorpaySignature: String(payment?.razorpay_signature || "").trim(),
                 verifiedAt: isVerified ? new Date() : null,
               }
             : undefined,
@@ -4623,6 +4244,12 @@ app.post("/api/checkout", async (req, res) => {
     if (msg === "Coupon already used") {
       return res.status(400).json({ error: msg });
     }
+    if (msg.startsWith("Coupon is valid only for")) {
+      return res.status(400).json({ error: msg });
+    }
+    if (msg.startsWith("This coupon is only applicable")) {
+      return res.status(400).json({ error: msg });
+    }
     console.error("Error creating checkout order", err);
     return res.status(500).json({ error: "Internal server error" });
   } finally {
@@ -4659,9 +4286,7 @@ app.post("/api/checkout/buy-now", async (req, res) => {
     const price = Number(item.price || 0);
 
     if (!productId || !mongoose.isValidObjectId(productId)) {
-      return res
-        .status(400)
-        .json({ error: "valid item.productId is required" });
+      return res.status(400).json({ error: "valid item.productId is required" });
     }
     if (!color) {
       return res.status(400).json({ error: "item.color is required" });
@@ -4701,26 +4326,27 @@ app.post("/api/checkout/buy-now", async (req, res) => {
     let discount = 0;
     let couponFinal = couponCode ? String(couponCode).trim().toUpperCase() : "";
     if (couponFinal) {
-      const alreadyUsed = await CouponRedemption.exists({
-        userId: uid,
-        code: couponFinal,
-      }).session(session);
+      const alreadyUsed = await CouponRedemption.exists({ userId: uid, code: couponFinal }).session(session);
       if (alreadyUsed) throw new Error("Coupon already used");
 
       const coupon = await Coupon.findOne({ code: couponFinal, isActive: true })
         .session(session)
         .lean();
-      if (
-        coupon &&
-        (!coupon.expiresAt ||
-          new Date(coupon.expiresAt).getTime() >= Date.now())
-      ) {
+      if (coupon && (!coupon.expiresAt || new Date(coupon.expiresAt).getTime() >= Date.now())) {
+        const couponScope = normalizeCouponPaymentScope(coupon.applicableOn);
+        if (couponScope !== "all" && couponScope !== normalizeCouponPaymentScope(paymentMethod)) {
+          throw new Error(`Coupon is valid only for ${couponScope === "cod" ? "COD" : "online payment"}`);
+        }
+        const categoryMatch = await getCouponCategoryMatch(coupon, items, session);
+        if (!categoryMatch.matches) {
+          throw new Error("This coupon is only applicable on selected products or categories in your cart.");
+        }
         const minSub = Number(coupon.minSubtotal || 0);
         if (subtotal >= minSub) {
           if (coupon.type === "flat") {
-            discount = Number(coupon.value || 0);
+            discount = Math.min(Number(coupon.value || 0), categoryMatch.subtotal);
           } else {
-            discount = (subtotal * Number(coupon.value || 0)) / 100;
+            discount = (categoryMatch.subtotal * Number(coupon.value || 0)) / 100;
             const cap = Number(coupon.maxDiscount || 0);
             if (cap > 0) discount = Math.min(discount, cap);
           }
@@ -4760,15 +4386,9 @@ app.post("/api/checkout/buy-now", async (req, res) => {
           paymentDetails: isOnline
             ? {
                 provider: "razorpay",
-                razorpayOrderId: String(
-                  payment?.razorpay_order_id || "",
-                ).trim(),
-                razorpayPaymentId: String(
-                  payment?.razorpay_payment_id || "",
-                ).trim(),
-                razorpaySignature: String(
-                  payment?.razorpay_signature || "",
-                ).trim(),
+                razorpayOrderId: String(payment?.razorpay_order_id || "").trim(),
+                razorpayPaymentId: String(payment?.razorpay_payment_id || "").trim(),
+                razorpaySignature: String(payment?.razorpay_signature || "").trim(),
                 verifiedAt: isVerified ? new Date() : null,
               }
             : undefined,
@@ -4802,10 +4422,10 @@ app.post("/api/checkout/buy-now", async (req, res) => {
       // ignore
     }
     const msg = err?.message || "Internal server error";
-    if (msg.startsWith("Out of stock:"))
+    if (msg.startsWith("Out of stock:")) return res.status(400).json({ error: msg });
+    if (msg === "Coupon already used" || msg.startsWith("Coupon is valid only for") || msg.startsWith("This coupon is only applicable")) {
       return res.status(400).json({ error: msg });
-    if (msg === "Coupon already used")
-      return res.status(400).json({ error: msg });
+    }
     console.error("Error creating buy-now checkout order", err);
     return res.status(500).json({ error: "Internal server error" });
   } finally {
@@ -4817,9 +4437,7 @@ app.post("/api/checkout/buy-now", async (req, res) => {
 app.post("/api/contact", async (req, res) => {
   try {
     const name = String(req.body?.name || "").trim();
-    const email = String(req.body?.email || "")
-      .trim()
-      .toLowerCase();
+    const email = String(req.body?.email || "").trim().toLowerCase();
     const phone = String(req.body?.phone || "").trim();
     const message = String(req.body?.message || "").trim();
 
@@ -4835,9 +4453,7 @@ app.post("/api/contact", async (req, res) => {
       phone,
       message,
       meta: {
-        ip: String(
-          req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "",
-        ),
+        ip: String(req.headers["x-forwarded-for"] || req.socket?.remoteAddress || ""),
         userAgent: String(req.headers["user-agent"] || ""),
       },
     });
@@ -4856,10 +4472,7 @@ app.get(
   adminMiddleware,
   async (req, res) => {
     try {
-      const limit = Math.min(
-        Math.max(parseInt(req.query?.limit, 10) || 50, 1),
-        200,
-      );
+      const limit = Math.min(Math.max(parseInt(req.query?.limit, 10) || 50, 1), 200);
       const items = await ContactMessage.find()
         .sort({ createdAt: -1 })
         .limit(limit)
@@ -4879,14 +4492,15 @@ app.post("/api/shipping/rates", async (req, res) => {
   try {
     const { country, province, postalCode, subtotal } = req.body || {};
 
-    const c = String(country || "")
-      .trim()
-      .toLowerCase();
+    const c = String(country || "").trim().toLowerCase();
     const p = String(province || "").trim();
     const pc = String(postalCode || "").trim();
     const sub = Number(subtotal || 0);
 
-    const isIndia = c === "india" || c === "in" || c.includes("india");
+    const isIndia =
+      c === "india" ||
+      c === "in" ||
+      c.includes("india");
 
     // Base shipping rules (you can replace with real courier API later)
     let shipping = isIndia ? 49 : 199;
@@ -4927,12 +4541,11 @@ app.get("/api/recommendations", async (req, res) => {
 
     const limitNum = Math.max(parseInt(limit, 10) || 6, 1);
 
-    const baseCategoryIds =
-      Array.isArray(base.categoryIds) && base.categoryIds.length
-        ? base.categoryIds
-        : base.categoryId != null
-          ? [base.categoryId]
-          : [];
+    const baseCategoryIds = Array.isArray(base.categoryIds) && base.categoryIds.length
+      ? base.categoryIds
+      : base.categoryId != null
+        ? [base.categoryId]
+        : [];
 
     const items = baseCategoryIds.length
       ? await CatalogProduct.find({
@@ -4972,12 +4585,11 @@ app.post("/api/recommendations", async (req, res) => {
 
     const limitNum = Math.max(parseInt(limit, 10) || 6, 1);
 
-    const baseCategoryIds =
-      Array.isArray(base.categoryIds) && base.categoryIds.length
-        ? base.categoryIds
-        : base.categoryId != null
-          ? [base.categoryId]
-          : [];
+    const baseCategoryIds = Array.isArray(base.categoryIds) && base.categoryIds.length
+      ? base.categoryIds
+      : base.categoryId != null
+        ? [base.categoryId]
+        : [];
 
     const items = baseCategoryIds.length
       ? await CatalogProduct.find({
@@ -5050,13 +4662,8 @@ async function resolveCatalogCategoryIdsInParams(params) {
 
   const catList = Array.isArray(raw)
     ? raw
-    : String(raw)
-        .split(",")
-        .map((c) => c.trim())
-        .filter(Boolean);
-  const catNums = catList
-    .map((c) => Number(c))
-    .filter((n) => Number.isFinite(n));
+    : String(raw).split(",").map((c) => c.trim()).filter(Boolean);
+  const catNums = catList.map((c) => Number(c)).filter((n) => Number.isFinite(n));
   if (!catNums.length) return { ...params };
 
   const expanded = await expandCategoryIdsWithDescendants(catNums);
@@ -5091,10 +4698,7 @@ function buildCatalogFilter(params) {
     // Support comma-separated multiple category IDs (or array after server-side expansion)
     const catList = Array.isArray(categoryId)
       ? categoryId
-      : String(categoryId)
-          .split(",")
-          .map((c) => c.trim())
-          .filter(Boolean);
+      : String(categoryId).split(",").map((c) => c.trim()).filter(Boolean);
     const catNums = catList
       .map((c) => Number(c))
       .filter((n) => Number.isFinite(n));
@@ -5140,9 +4744,7 @@ function buildCatalogFilter(params) {
     (c) => normKey(c) === "multicolor",
   );
   const wantsMulticolor = (() => {
-    const raw = String(multicolor ?? "")
-      .trim()
-      .toLowerCase();
+    const raw = String(multicolor ?? "").trim().toLowerCase();
     const flag = raw === "true" || raw === "1" || raw === "yes";
     return flag || wantsMulticolorFromColors;
   })();
@@ -5262,17 +4864,12 @@ function buildCatalogFilter(params) {
     : typeof availability === "string"
       ? availability.split(",")
       : [];
-  const cleanAvail = availList
-    .map((a) => String(a).trim().toLowerCase())
-    .filter(Boolean);
+  const cleanAvail = availList.map((a) => String(a).trim().toLowerCase()).filter(Boolean);
   if (cleanAvail.length) {
     if (cleanAvail.includes("instock") && !cleanAvail.includes("outofstock")) {
       // at least one size with stock > 0
       filter["variants.sizes.stock"] = { $gt: 0 };
-    } else if (
-      cleanAvail.includes("outofstock") &&
-      !cleanAvail.includes("instock")
-    ) {
+    } else if (cleanAvail.includes("outofstock") && !cleanAvail.includes("instock")) {
       // all sizes out of stock: no size has stock > 0
       filter["variants.sizes.stock"] = { $not: { $gt: 0 } };
     }
@@ -5383,7 +4980,9 @@ function buildVariantColorKeysMatchExpr(normalizedKeys) {
                       {
                         $setUnion: [
                           // primary `color`
-                          [mongoVariantColorNameKeyExpr()],
+                          [
+                            mongoVariantColorNameKeyExpr(),
+                          ],
                           // additional `colors[]`
                           {
                             $map: {
@@ -5511,8 +5110,7 @@ function deriveSwatchHexFromName(name) {
 
   // Deterministic pastel-ish color based on string hash (stable across sessions).
   let h = 0;
-  for (let i = 0; i < lower.length; i++)
-    h = (h * 31 + lower.charCodeAt(i)) >>> 0;
+  for (let i = 0; i < lower.length; i++) h = (h * 31 + lower.charCodeAt(i)) >>> 0;
   const hue = h % 360;
   const sat = 58; // %
   const lit = 60; // %
@@ -5538,7 +5136,7 @@ app.get("/api/catalog-products/filters", async (req, res) => {
       brandAgg,
       totalCount,
       inStockCount,
-      categoryAgg, // always unfiltered
+      categoryAgg,   // always unfiltered
     ] = await Promise.all([
       // Colors — one row per canonical color *name* (trim+lower + gold/golen→golden, grey→gray)
       CatalogProduct.aggregate([
@@ -5572,10 +5170,7 @@ app.get("/api/catalog-products/filters", async (req, res) => {
                 in: {
                   $switch: {
                     branches: [
-                      {
-                        case: { $in: ["$$r", ["gold", "golen"]] },
-                        then: "golden",
-                      },
+                      { case: { $in: ["$$r", ["gold", "golen"]] }, then: "golden" },
                       { case: { $eq: ["$$r", "grey"] }, then: "gray" },
                     ],
                     default: "$$r",
@@ -5599,10 +5194,7 @@ app.get("/api/catalog-products/filters", async (req, res) => {
                 in: {
                   $switch: {
                     branches: [
-                      {
-                        case: { $in: ["$$r", ["gold", "golen"]] },
-                        then: "golden",
-                      },
+                      { case: { $in: ["$$r", ["gold", "golen"]] }, then: "golden" },
                       { case: { $eq: ["$$r", "grey"] }, then: "gray" },
                     ],
                     default: "$$r",
@@ -5628,10 +5220,7 @@ app.get("/api/catalog-products/filters", async (req, res) => {
                         in: {
                           $switch: {
                             branches: [
-                              {
-                                case: { $in: ["$$r", ["gold", "golen"]] },
-                                then: "golden",
-                              },
+                              { case: { $in: ["$$r", ["gold", "golen"]] }, then: "golden" },
                               { case: { $eq: ["$$r", "grey"] }, then: "gray" },
                             ],
                             default: "$$r",
@@ -5708,10 +5297,7 @@ app.get("/api/catalog-products/filters", async (req, res) => {
                 in: {
                   $switch: {
                     branches: [
-                      {
-                        case: { $in: ["$$r", ["gold", "golen"]] },
-                        then: "golden",
-                      },
+                      { case: { $in: ["$$r", ["gold", "golen"]] }, then: "golden" },
                       { case: { $eq: ["$$r", "grey"] }, then: "gray" },
                     ],
                     default: "$$r",
@@ -5724,7 +5310,11 @@ app.get("/api/catalog-products/filters", async (req, res) => {
         {
           $addFields: {
             _colorKey: {
-              $cond: [{ $ne: ["$_nameKey", ""] }, "$_nameKey", "$_codeKey"],
+              $cond: [
+                { $ne: ["$_nameKey", ""] },
+                "$_nameKey",
+                "$_codeKey",
+              ],
             },
           },
         },
@@ -5815,9 +5405,7 @@ app.get("/api/catalog-products/filters", async (req, res) => {
     // Fetch category names to pair with ids
     const catIds = categoryAgg.map((c) => c._id).filter((id) => id != null);
     const categoryDocs = catIds.length
-      ? await Category.find({ id: { $in: catIds } })
-          .select({ id: 1, title: 1 })
-          .lean()
+      ? await Category.find({ id: { $in: catIds } }).select({ id: 1, title: 1 }).lean()
       : [];
     const catNameMap = new Map(categoryDocs.map((c) => [c.id, c.title]));
 
@@ -5833,9 +5421,7 @@ app.get("/api/catalog-products/filters", async (req, res) => {
         pickRepresentativeLabel(
           (row.colorCodes || []).filter((x) => String(x || "").trim()),
         ) || "";
-      const normalizedPicked = String(picked || "")
-        .trim()
-        .toLowerCase();
+      const normalizedPicked = String(picked || "").trim().toLowerCase();
       const colorCode =
         normalizedPicked && normalizedPicked !== "#ccc"
           ? picked
@@ -5850,10 +5436,7 @@ app.get("/api/catalog-products/filters", async (req, res) => {
     if (multicolorCount > 0) {
       // Avoid duplicate "Multicolor" when dataset also contains it as a real color label.
       const withoutExistingMulti = colors.filter(
-        (c) =>
-          String(c?.color || "")
-            .trim()
-            .toLowerCase() !== "multicolor",
+        (c) => String(c?.color || "").trim().toLowerCase() !== "multicolor",
       );
       withoutExistingMulti.unshift({
         color: "Multicolor",
@@ -5874,11 +5457,7 @@ app.get("/api/catalog-products/filters", async (req, res) => {
     res.json({
       availability: [
         { value: "instock", label: "In stock", count: inStockCount },
-        {
-          value: "outofstock",
-          label: "Out of stock",
-          count: Math.max(totalCount - inStockCount, 0),
-        },
+        { value: "outofstock", label: "Out of stock", count: Math.max(totalCount - inStockCount, 0) },
       ],
       colors,
       sizes,
@@ -5930,21 +5509,15 @@ app.get("/api/admin/catalog-products", async (req, res) => {
 // Admin API: list catalog products (POST with JSON body filters)
 function buildSortQuery(sortBy) {
   switch (sortBy) {
-    case "title-ascending":
-      return { name: 1 };
-    case "title-descending":
-      return { name: -1 };
-    case "price-ascending":
-      return { price: 1 };
-    case "price-descending":
-      return { price: -1 };
-    case "created-ascending":
-      return { createdAt: 1 };
+    case "title-ascending":    return { name: 1 };
+    case "title-descending":   return { name: -1 };
+    case "price-ascending":    return { price: 1 };
+    case "price-descending":   return { price: -1 };
+    case "created-ascending":  return { createdAt: 1 };
     case "best-selling":
     case "manual":
     case "created-descending":
-    default:
-      return { createdAt: -1 };
+    default:                   return { createdAt: -1 };
   }
 }
 
@@ -6119,9 +5692,7 @@ app.post("/api/admin/catalog-products/search", async (req, res) => {
     const { page = 1, limit = 40, sortBy, ...rest } = body;
     // Search text is allowed from multiple client keys; pluck explicitly to avoid
     // any accidental stripping during param normalization.
-    const explicitSearchText = String(
-      body.search ?? body.q ?? body.query ?? "",
-    ).trim();
+    const explicitSearchText = String(body.search ?? body.q ?? body.query ?? "").trim();
     const resolvedRest = await resolveCatalogCategoryIdsInParams(rest || {});
     const filter = buildCatalogFilter(resolvedRest);
     const sort = buildSortQuery(sortBy);
@@ -6130,17 +5701,13 @@ app.post("/api/admin/catalog-products/search", async (req, res) => {
     const limitNum = Math.max(parseInt(limit, 10) || 40, 1);
     const skip = (pageNum - 1) * limitNum;
 
-    const rawCat =
-      rest && Object.prototype.hasOwnProperty.call(rest, "categoryId")
-        ? rest.categoryId
-        : undefined;
+    const rawCat = rest && Object.prototype.hasOwnProperty.call(rest, "categoryId")
+      ? rest.categoryId
+      : undefined;
     const catList = Array.isArray(rawCat)
       ? rawCat
       : rawCat != null
-        ? String(rawCat)
-            .split(",")
-            .map((c) => c.trim())
-            .filter(Boolean)
+        ? String(rawCat).split(",").map((c) => c.trim()).filter(Boolean)
         : [];
     const catNums = catList
       .map((c) => Number(c))
@@ -6199,9 +5766,7 @@ app.post("/api/admin/catalog-products/search", async (req, res) => {
             p?.slug,
             p?.brand,
             p?.description,
-            ...(Array.isArray(p?.variants)
-              ? p.variants.map((v) => v?.color)
-              : []),
+            ...(Array.isArray(p?.variants) ? p.variants.map((v) => v?.color) : []),
           ]
             .filter((v) => typeof v === "string" && v.trim())
             .join(" ")
@@ -6229,10 +5794,7 @@ app.post("/api/admin/catalog-products/search", async (req, res) => {
         ]),
       ]);
 
-      total =
-        Array.isArray(countRows) && countRows[0]?.total
-          ? countRows[0].total
-          : 0;
+      total = Array.isArray(countRows) && countRows[0]?.total ? countRows[0].total : 0;
       items = Array.isArray(fetchedItems) ? fetchedItems : [];
     }
 
@@ -6257,15 +5819,10 @@ app.post("/api/catalog-products/search", async (req, res) => {
   try {
     const body = req.body || {};
     const { page = 1, limit = 40, sortBy, ...rest } = body;
-    const explicitSearchText = String(
-      body.search ?? body.q ?? body.query ?? "",
-    ).trim();
+    const explicitSearchText = String(body.search ?? body.q ?? body.query ?? "").trim();
     const resolvedRest = await resolveCatalogCategoryIdsInParams(rest || {});
     // Force active-only for storefront
-    const filter = buildCatalogFilter({
-      ...(resolvedRest || {}),
-      status: "active",
-    });
+    const filter = buildCatalogFilter({ ...(resolvedRest || {}), status: "active" });
     const sort = buildSortQuery(sortBy);
 
     const pageNum = Math.max(parseInt(page, 10) || 1, 1);
@@ -6291,7 +5848,12 @@ app.post("/api/catalog-products/search", async (req, res) => {
       const searchNeedle = explicitSearchText.toLowerCase();
       const fetchedAll = await CatalogProduct.find(filter).sort(sort).lean();
       const matched = fetchedAll.filter((p) => {
-        const hay = [p?.name, p?.slug, p?.brand, p?.description]
+        const hay = [
+          p?.name,
+          p?.slug,
+          p?.brand,
+          p?.description,
+        ]
           .filter(Boolean)
           .map((x) => String(x).toLowerCase());
         return hay.some((t) => t.includes(searchNeedle));
@@ -6322,12 +5884,11 @@ app.post("/api/admin/catalog-products", async (req, res) => {
 
     // Auto-generate slug from name if missing
     if (!payload.slug && payload.name) {
-      const base =
-        String(payload.name)
-          .toLowerCase()
-          .trim()
-          .replace(/[^a-z0-9]+/g, "-")
-          .replace(/^-+|-+$/g, "") || "product";
+      const base = String(payload.name)
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "product";
 
       let slug = base;
       let i = 1;
@@ -6406,8 +5967,7 @@ app.get("/api/admin/catalog-products/:id", async (req, res) => {
     const { id } = req.params;
     if (!id) return res.status(400).json({ error: "id is required" });
     const doc = await CatalogProduct.findById(id).lean();
-    if (!doc)
-      return res.status(404).json({ error: "Catalog product not found" });
+    if (!doc) return res.status(404).json({ error: "Catalog product not found" });
     return res.json(doc);
   } catch (err) {
     console.error("Error fetching catalog product by id", err);
@@ -6422,8 +5982,7 @@ app.put("/api/admin/catalog-products/:id", async (req, res) => {
     if (!productId) return res.status(400).json({ error: "id is required" });
 
     const existing = await CatalogProduct.findById(productId).lean();
-    if (!existing)
-      return res.status(404).json({ error: "Catalog product not found" });
+    if (!existing) return res.status(404).json({ error: "Catalog product not found" });
 
     const payload = req.body || {};
 
@@ -6438,10 +5997,7 @@ app.put("/api/admin/catalog-products/:id", async (req, res) => {
     if (merged.price == null || !Number.isFinite(Number(merged.price))) {
       return res.status(400).json({ error: "price is required" });
     }
-    if (
-      merged.description == null ||
-      String(merged.description || "").trim() === ""
-    ) {
+    if (merged.description == null || String(merged.description || "").trim() === "") {
       return res.status(400).json({ error: "description is required" });
     }
     const rawCategoryIds =
@@ -6484,12 +6040,11 @@ app.put("/api/admin/catalog-products/:id", async (req, res) => {
       String(payload.name || "").trim() !== String(existing.name || "").trim();
 
     if (!slug || shouldRegenerateSlug) {
-      const base =
-        String(merged.name)
-          .toLowerCase()
-          .trim()
-          .replace(/[^a-z0-9]+/g, "-")
-          .replace(/^-+|-+$/g, "") || "product";
+      const base = String(merged.name)
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "product";
 
       let candidate = base;
       let i = 1;
@@ -6517,8 +6072,7 @@ app.put("/api/admin/catalog-products/:id", async (req, res) => {
         .filter((n) => Number.isFinite(n));
     }
     // Legacy compat
-    if (merged.categoryId != null)
-      merged.categoryId = Number(merged.categoryId);
+    if (merged.categoryId != null) merged.categoryId = Number(merged.categoryId);
     const discountPrice =
       merged.discountPrice == null || merged.discountPrice === ""
         ? undefined
@@ -6563,11 +6117,10 @@ app.put("/api/admin/catalog-products/:id", async (req, res) => {
     const updated = await CatalogProduct.findByIdAndUpdate(
       productId,
       { $set: updatedPayload },
-      { new: true },
+      { new: true }
     ).lean();
 
-    if (!updated)
-      return res.status(404).json({ error: "Catalog product not found" });
+    if (!updated) return res.status(404).json({ error: "Catalog product not found" });
     return res.json(updated);
   } catch (err) {
     console.error("Error updating catalog product", err);
@@ -6581,8 +6134,7 @@ app.delete("/api/admin/catalog-products/:id", async (req, res) => {
     const { id: productId } = req.params;
     if (!productId) return res.status(400).json({ error: "id is required" });
     const deleted = await CatalogProduct.findByIdAndDelete(productId).lean();
-    if (!deleted)
-      return res.status(404).json({ error: "Catalog product not found" });
+    if (!deleted) return res.status(404).json({ error: "Catalog product not found" });
     const pidStr = String(productId);
     const rvResult = await RecentlyViewed.deleteMany({ productId: pidStr });
     return res.json({
@@ -6608,7 +6160,8 @@ function sortCategoryDocsForNav(list) {
 /** Build Header.js–compatible menu: top-level categories → mega items; children → links with categoryIds */
 function buildNavMenuFromCategories(allRaw) {
   const all = sortCategoryDocsForNav(allRaw);
-  const isRoot = (c) => c.parentId == null || c.parentId === undefined;
+  const isRoot = (c) =>
+    c.parentId == null || c.parentId === undefined;
   const roots = all.filter(isRoot);
   const childrenOf = (pid) =>
     sortCategoryDocsForNav(
@@ -6718,12 +6271,7 @@ async function writeCuratedProductsSetting(key, productIds, max = 12) {
   const ids = sanitizeObjectIdList(productIds || [], max);
   const updated = await SiteSetting.findOneAndUpdate(
     { key: k },
-    {
-      $set: {
-        key: k,
-        value: { productIds: ids, updatedAt: new Date().toISOString() },
-      },
-    },
+    { $set: { key: k, value: { productIds: ids, updatedAt: new Date().toISOString() } } },
     { upsert: true, new: true },
   ).lean();
   return { productIds: ids, updatedAt: updated?.updatedAt || null };
@@ -6732,18 +6280,13 @@ async function writeCuratedProductsSetting(key, productIds, max = 12) {
 // Public: get curated "Suggested for you" products
 app.get("/api/home-suggestions", async (req, res) => {
   try {
-    const limit = Math.min(
-      Math.max(parseInt(req.query?.limit, 10) || 8, 1),
-      12,
-    );
+    const limit = Math.min(Math.max(parseInt(req.query?.limit, 10) || 8, 1), 12);
     const { productIds } = await readHomeSuggestionsSetting();
     const ids = productIds.slice(0, limit);
     if (!ids.length) return res.json({ items: [] });
 
-    const docs = await CatalogProduct.find({
-      _id: { $in: ids },
-      status: { $ne: "inactive" },
-    }).lean();
+    const docs = await CatalogProduct.find({ _id: { $in: ids }, status: { $ne: "inactive" } })
+      .lean();
     const byId = new Map(docs.map((d) => [String(d?._id || ""), d]));
     const ordered = ids.map((id) => byId.get(String(id))).filter(Boolean);
     return res.json({ items: ordered });
@@ -6760,24 +6303,16 @@ app.get("/api/home-suggestions", async (req, res) => {
 async function getCuratedCatalogProductsByIds(ids) {
   const list = Array.isArray(ids) ? ids : [];
   if (!list.length) return [];
-  const docs = await CatalogProduct.find({
-    _id: { $in: list },
-    status: { $ne: "inactive" },
-  }).lean();
+  const docs = await CatalogProduct.find({ _id: { $in: list }, status: { $ne: "inactive" } })
+    .lean();
   const byId = new Map(docs.map((d) => [String(d?._id || ""), d]));
   return list.map((id) => byId.get(String(id))).filter(Boolean);
 }
 
 app.get("/api/home-best-sellers", async (req, res) => {
   try {
-    const limit = Math.min(
-      Math.max(parseInt(req.query?.limit, 10) || 20, 1),
-      40,
-    );
-    const { productIds } = await readCuratedProductsSetting(
-      "homeBestSellers",
-      40,
-    );
+    const limit = Math.min(Math.max(parseInt(req.query?.limit, 10) || 20, 1), 40);
+    const { productIds } = await readCuratedProductsSetting("homeBestSellers", 40);
     const ids = productIds.slice(0, limit);
     if (!ids.length) return res.json({ items: [] });
     const items = await getCuratedCatalogProductsByIds(ids);
@@ -6790,14 +6325,8 @@ app.get("/api/home-best-sellers", async (req, res) => {
 
 app.get("/api/home-new-arrivals", async (req, res) => {
   try {
-    const limit = Math.min(
-      Math.max(parseInt(req.query?.limit, 10) || 20, 1),
-      40,
-    );
-    const { productIds } = await readCuratedProductsSetting(
-      "homeNewArrivals",
-      40,
-    );
+    const limit = Math.min(Math.max(parseInt(req.query?.limit, 10) || 20, 1), 40);
+    const { productIds } = await readCuratedProductsSetting("homeNewArrivals", 40);
     const ids = productIds.slice(0, limit);
     if (!ids.length) return res.json({ items: [] });
     const items = await getCuratedCatalogProductsByIds(ids);
@@ -6808,145 +6337,88 @@ app.get("/api/home-new-arrivals", async (req, res) => {
   }
 });
 
-app.get(
-  "/api/admin/home-best-sellers",
-  authMiddleware,
-  adminMiddleware,
-  async (req, res) => {
-    try {
-      const { productIds, updatedAt } = await readCuratedProductsSetting(
-        "homeBestSellers",
-        40,
-      );
-      const items = await getCuratedCatalogProductsByIds(productIds);
-      return res.json({ productIds, updatedAt, items });
-    } catch (err) {
-      console.error("Error reading admin home best sellers", err);
-      return res.status(500).json({ error: "Internal server error" });
-    }
-  },
-);
+app.get("/api/admin/home-best-sellers", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { productIds, updatedAt } = await readCuratedProductsSetting("homeBestSellers", 40);
+    const items = await getCuratedCatalogProductsByIds(productIds);
+    return res.json({ productIds, updatedAt, items });
+  } catch (err) {
+    console.error("Error reading admin home best sellers", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
 
-app.put(
-  "/api/admin/home-best-sellers",
-  authMiddleware,
-  adminMiddleware,
-  async (req, res) => {
-    try {
-      const { productIds, updatedAt } = await writeCuratedProductsSetting(
-        "homeBestSellers",
-        req.body?.productIds || [],
-        40,
-      );
-      return res.json({ ok: true, productIds, updatedAt });
-    } catch (err) {
-      console.error("Error updating home best sellers", err);
-      return res.status(500).json({ error: "Internal server error" });
-    }
-  },
-);
+app.put("/api/admin/home-best-sellers", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { productIds, updatedAt } = await writeCuratedProductsSetting(
+      "homeBestSellers",
+      req.body?.productIds || [],
+      40,
+    );
+    return res.json({ ok: true, productIds, updatedAt });
+  } catch (err) {
+    console.error("Error updating home best sellers", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
 
-app.get(
-  "/api/admin/home-new-arrivals",
-  authMiddleware,
-  adminMiddleware,
-  async (req, res) => {
-    try {
-      const { productIds, updatedAt } = await readCuratedProductsSetting(
-        "homeNewArrivals",
-        40,
-      );
-      const items = await getCuratedCatalogProductsByIds(productIds);
-      return res.json({ productIds, updatedAt, items });
-    } catch (err) {
-      console.error("Error reading admin home new arrivals", err);
-      return res.status(500).json({ error: "Internal server error" });
-    }
-  },
-);
+app.get("/api/admin/home-new-arrivals", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { productIds, updatedAt } = await readCuratedProductsSetting("homeNewArrivals", 40);
+    const items = await getCuratedCatalogProductsByIds(productIds);
+    return res.json({ productIds, updatedAt, items });
+  } catch (err) {
+    console.error("Error reading admin home new arrivals", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
 
-app.put(
-  "/api/admin/home-new-arrivals",
-  authMiddleware,
-  adminMiddleware,
-  async (req, res) => {
-    try {
-      const { productIds, updatedAt } = await writeCuratedProductsSetting(
-        "homeNewArrivals",
-        req.body?.productIds || [],
-        40,
-      );
-      return res.json({ ok: true, productIds, updatedAt });
-    } catch (err) {
-      console.error("Error updating home new arrivals", err);
-      return res.status(500).json({ error: "Internal server error" });
-    }
-  },
-);
+app.put("/api/admin/home-new-arrivals", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { productIds, updatedAt } = await writeCuratedProductsSetting(
+      "homeNewArrivals",
+      req.body?.productIds || [],
+      40,
+    );
+    return res.json({ ok: true, productIds, updatedAt });
+  } catch (err) {
+    console.error("Error updating home new arrivals", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 // Admin: read current setting + preview products
-app.get(
-  "/api/admin/home-suggestions",
-  authMiddleware,
-  adminMiddleware,
-  async (req, res) => {
-    try {
-      const { productIds, updatedAt } = await readHomeSuggestionsSetting();
-      if (!productIds.length)
-        return res.json({ productIds: [], updatedAt, items: [] });
-      const docs = await CatalogProduct.find({ _id: { $in: productIds } })
-        .select({
-          _id: 1,
-          name: 1,
-          slug: 1,
-          price: 1,
-          discountPrice: 1,
-          variants: 1,
-          image: 1,
-          status: 1,
-        })
-        .lean();
-      const byId = new Map(docs.map((d) => [String(d?._id || ""), d]));
-      const ordered = productIds
-        .map((id) => byId.get(String(id)))
-        .filter(Boolean);
-      return res.json({ productIds, updatedAt, items: ordered });
-    } catch (err) {
-      console.error("Error reading admin home suggestions", err);
-      return res.status(500).json({ error: "Internal server error" });
-    }
-  },
-);
+app.get("/api/admin/home-suggestions", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { productIds, updatedAt } = await readHomeSuggestionsSetting();
+    if (!productIds.length) return res.json({ productIds: [], updatedAt, items: [] });
+    const docs = await CatalogProduct.find({ _id: { $in: productIds } })
+      .select({ _id: 1, name: 1, slug: 1, price: 1, discountPrice: 1, variants: 1, image: 1, status: 1 })
+      .lean();
+    const byId = new Map(docs.map((d) => [String(d?._id || ""), d]));
+    const ordered = productIds.map((id) => byId.get(String(id))).filter(Boolean);
+    return res.json({ productIds, updatedAt, items: ordered });
+  } catch (err) {
+    console.error("Error reading admin home suggestions", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 // Admin: update curated product list
-app.put(
-  "/api/admin/home-suggestions",
-  authMiddleware,
-  adminMiddleware,
-  async (req, res) => {
-    try {
-      const productIds = sanitizeObjectIdList(req.body?.productIds || [], 12);
-      const updated = await SiteSetting.findOneAndUpdate(
-        { key: "homeSuggestions" },
-        {
-          $set: {
-            key: "homeSuggestions",
-            value: { productIds, updatedAt: new Date().toISOString() },
-          },
-        },
-        { upsert: true, new: true },
-      ).lean();
-      return res.json({
-        ok: true,
-        productIds,
-        updatedAt: updated?.updatedAt || null,
-      });
-    } catch (err) {
-      console.error("Error updating home suggestions", err);
-      return res.status(500).json({ error: "Internal server error" });
-    }
-  },
-);
+app.put("/api/admin/home-suggestions", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const productIds = sanitizeObjectIdList(req.body?.productIds || [], 12);
+    const updated = await SiteSetting.findOneAndUpdate(
+      { key: "homeSuggestions" },
+      { $set: { key: "homeSuggestions", value: { productIds, updatedAt: new Date().toISOString() } } },
+      { upsert: true, new: true },
+    ).lean();
+    return res.json({ ok: true, productIds, updatedAt: updated?.updatedAt || null });
+  } catch (err) {
+    console.error("Error updating home suggestions", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 const NAV_MENU_DEPRECATED_MSG =
   "Navigation is built from Shop Categories. Use Admin → Categories (titles, parent, Sort order).";
@@ -6988,14 +6460,9 @@ async function start() {
       ensureUploadFilesAsync({
         uploadDir: UPLOAD_DIR,
         db: mongoose.connection.db,
-      }).catch((err) =>
-        console.error("[uploads] background sync failed:", err.message),
-      );
+      }).catch((err) => console.error("[uploads] background sync failed:", err.message));
     } catch (err) {
-      console.error(
-        "Failed to connect to MongoDB. Continuing without DB.",
-        err,
-      );
+      console.error("Failed to connect to MongoDB. Continuing without DB.", err);
     }
   }
 
