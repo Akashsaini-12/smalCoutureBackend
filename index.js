@@ -2705,6 +2705,7 @@ const couponSchema = new mongoose.Schema(
     minSubtotal: { type: Number, default: 0, min: 0 },
     maxDiscount: { type: Number, default: 0, min: 0 }, // only for percent (0 = no cap)
     applicableOn: { type: String, enum: ["all", "prepaid", "cod"], default: "all" },
+    applicableCategories: { type: [String], default: [] },
     isActive: { type: Boolean, default: true },
     expiresAt: { type: Date },
   },
@@ -3737,6 +3738,7 @@ app.post("/api/addresses/delete", async (req, res) => {
 app.post("/api/coupons/validate", async (req, res) => {
   try {
     const { code, subtotal, userId, paymentMethod } = req.body || {};
+    const cartItems = Array.isArray(req.body?.items) ? req.body.items : [];
     const c = String(code || "").trim().toUpperCase();
     const sub = Number(subtotal || 0);
     if (!c) return res.status(400).json({ error: "code is required" });
@@ -3755,6 +3757,27 @@ app.post("/api/coupons/validate", async (req, res) => {
     const couponScope = normalizeCouponPaymentScope(coupon.applicableOn);
     if (couponScope !== "all" && couponScope !== normalizeCouponPaymentScope(paymentMethod)) {
       return res.status(400).json({ error: `Coupon is valid only for ${couponScope === "cod" ? "COD" : "online payment"}` });
+    }
+    const applicableCategories = (Array.isArray(coupon.applicableCategories) ? coupon.applicableCategories : [])
+      .map((categoryId) => String(categoryId).trim())
+      .filter(Boolean);
+    if (applicableCategories.length && cartItems.length) {
+      const productIds = cartItems
+        .map((item) => String(item?.productId || ""))
+        .filter((productId) => mongoose.isValidObjectId(productId));
+      const products = productIds.length
+        ? await CatalogProduct.find({ _id: { $in: productIds } }).select({ categoryId: 1, categoryIds: 1 }).lean()
+        : [];
+      const applicableSet = new Set(applicableCategories);
+      const appliesToCart = products.some((product) => {
+        const categoryIds = Array.isArray(product.categoryIds) && product.categoryIds.length
+          ? product.categoryIds
+          : product.categoryId != null ? [product.categoryId] : [];
+        return categoryIds.some((categoryId) => applicableSet.has(String(categoryId)));
+      });
+      if (!appliesToCart) {
+        return res.status(400).json({ error: "Coupon is not applicable to the selected categories" });
+      }
     }
     if (coupon.expiresAt && new Date(coupon.expiresAt).getTime() < Date.now()) {
       return res.status(400).json({ error: "Coupon expired" });
@@ -3783,6 +3806,7 @@ app.post("/api/coupons/validate", async (req, res) => {
         minSubtotal: coupon.minSubtotal || 0,
         maxDiscount: coupon.maxDiscount || 0,
         applicableOn: couponScope,
+        applicableCategories,
       },
     });
   } catch (err) {
@@ -3795,7 +3819,7 @@ app.post("/api/coupons/validate", async (req, res) => {
 // POST /api/coupons/list Body: { limit?, userId? }
 app.post("/api/coupons/list", async (req, res) => {
   try {
-    const { limit = 10, userId } = req.body || {};
+    const { limit = 10, userId, items: cartItems = [] } = req.body || {};
     const limitNum = Math.max(parseInt(limit, 10) || 10, 1);
 
     const now = new Date();
@@ -3815,6 +3839,42 @@ app.post("/api/coupons/list", async (req, res) => {
       .limit(limitNum)
       .lean();
 
+    const categoryIds = [...new Set(items.flatMap((coupon) =>
+      Array.isArray(coupon.applicableCategories) ? coupon.applicableCategories.map(String) : [],
+    ))];
+    const categoryRows = categoryIds.length
+      ? await Category.find({ id: { $in: categoryIds.map(Number).filter(Number.isFinite) } }).select({ id: 1, title: 1, parentId: 1 }).lean()
+      : [];
+    const parentIds = categoryRows
+      .map((category) => category.parentId)
+      .filter((id) => id != null)
+      .map(Number)
+      .filter(Number.isFinite);
+    const parentRows = parentIds.length
+      ? await Category.find({ id: { $in: parentIds } }).select({ id: 1, title: 1 }).lean()
+      : [];
+    const categoryTitles = new Map(parentRows.map((category) => [String(category.id), category.title]));
+    categoryRows.forEach((category) => {
+      const parentTitle = category.parentId != null ? categoryTitles.get(String(category.parentId)) : null;
+      const title = parentTitle
+        ? `${parentTitle} > ${category.title}`
+        : category.title;
+      categoryTitles.set(String(category.id), title);
+    });
+
+    const productIds = Array.isArray(cartItems)
+      ? cartItems.map((item) => String(item?.productId || "")).filter((id) => mongoose.isValidObjectId(id))
+      : [];
+    const cartProducts = productIds.length
+      ? await CatalogProduct.find({ _id: { $in: productIds } }).select({ categoryId: 1, categoryIds: 1 }).lean()
+      : [];
+    const cartCategoryIds = new Set(cartProducts.flatMap((product) => {
+      const ids = Array.isArray(product.categoryIds) && product.categoryIds.length
+        ? product.categoryIds
+        : product.categoryId != null ? [product.categoryId] : [];
+      return ids.map(String);
+    }));
+
     // Keep only safe fields for user UI
     const safe = items.map((c) => ({
       _id: c._id,
@@ -3824,6 +3884,10 @@ app.post("/api/coupons/list", async (req, res) => {
       minSubtotal: c.minSubtotal || 0,
       maxDiscount: c.maxDiscount || 0,
       applicableOn: normalizeCouponPaymentScope(c.applicableOn),
+      applicableCategories: Array.isArray(c.applicableCategories) ? c.applicableCategories : [],
+      applicableCategoryLabels: (Array.isArray(c.applicableCategories) ? c.applicableCategories : [])
+        .map((id) => categoryTitles.get(String(id)) || String(id)),
+      isApplicable: !c.applicableCategories?.length || [...c.applicableCategories].some((id) => cartCategoryIds.has(String(id))),
       expiresAt: c.expiresAt || null,
     }));
 
@@ -3967,6 +4031,7 @@ app.post("/api/admin/coupons/create", async (req, res) => {
       isActive = true,
       expiresAt,
       applicableOn = "all",
+      applicableCategories = [],
       paymentMethod,
     } = req.body || {};
 
@@ -3989,6 +4054,9 @@ app.post("/api/admin/coupons/create", async (req, res) => {
       isActive: Boolean(isActive),
       expiresAt: expiresAt ? new Date(expiresAt) : undefined,
       applicableOn: normalizeCouponPaymentScope(applicableOn || paymentMethod),
+      applicableCategories: Array.isArray(applicableCategories)
+        ? applicableCategories.map((categoryId) => String(categoryId).trim()).filter(Boolean)
+        : [],
     });
 
     return res.status(201).json({ item: couponDoc.toObject() });
