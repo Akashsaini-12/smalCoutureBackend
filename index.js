@@ -3825,7 +3825,7 @@ app.post("/api/coupons/list", async (req, res) => {
       maxDiscount: c.maxDiscount || 0,
       applicableOn: normalizeCouponPaymentScope(c.applicableOn),
       expiresAt: c.expiresAt || null,
-    }));
+    })));
 
     return res.json({ items: safe });
   } catch (err) {
@@ -4087,9 +4087,9 @@ app.post("/api/checkout", async (req, res) => {
         const minSub = Number(coupon.minSubtotal || 0);
         if (subtotal >= minSub) {
           if (coupon.type === "flat") {
-            discount = Number(coupon.value || 0);
+            discount = Math.min(Number(coupon.value || 0), categoryMatch.subtotal);
           } else {
-            discount = (subtotal * Number(coupon.value || 0)) / 100;
+            discount = (categoryMatch.subtotal * Number(coupon.value || 0)) / 100;
             const cap = Number(coupon.maxDiscount || 0);
             if (cap > 0) discount = Math.min(discount, cap);
           }
@@ -4266,9 +4266,9 @@ app.post("/api/checkout/buy-now", async (req, res) => {
         const minSub = Number(coupon.minSubtotal || 0);
         if (subtotal >= minSub) {
           if (coupon.type === "flat") {
-            discount = Number(coupon.value || 0);
+            discount = Math.min(Number(coupon.value || 0), categoryMatch.subtotal);
           } else {
-            discount = (subtotal * Number(coupon.value || 0)) / 100;
+            discount = (categoryMatch.subtotal * Number(coupon.value || 0)) / 100;
             const cap = Number(coupon.maxDiscount || 0);
             if (cap > 0) discount = Math.min(discount, cap);
           }
