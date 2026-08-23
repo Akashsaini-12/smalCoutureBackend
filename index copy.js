@@ -2490,7 +2490,6 @@ app.post("/api/admin/coupons/create", async (req, res) => {
       maxDiscount = 0,
       isActive = true,
       expiresAt,
-      applicableCategories = [],
     } = req.body || {};
 
     const c = String(code || "").trim().toUpperCase();
@@ -2511,10 +2510,6 @@ app.post("/api/admin/coupons/create", async (req, res) => {
       maxDiscount: Math.max(0, Number(maxDiscount) || 0),
       isActive: Boolean(isActive),
       expiresAt: expiresAt ? new Date(expiresAt) : undefined,
-      applicableCategories: (Array.isArray(applicableCategories) ? applicableCategories : [])
-        .map((category) => String(category).trim())
-        .filter(Boolean)
-        .filter((category, index, categories) => categories.indexOf(category) === index),
     });
 
     return res.status(201).json({ item: couponDoc.toObject() });
