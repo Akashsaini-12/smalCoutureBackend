@@ -3261,7 +3261,7 @@ app.post("/api/cart", async (req, res) => {
       }
     }
 
-    // Atomic upsert: increment qty for same user + same product identity (prevents duplicate rows)
+    // Atomic upsert: increment qty for same user+product+color+size (prevents duplicate rows)
     const filter =
       normalizedColor && normalizedSize
         ? { userId: uid, productId: pid, color: normalizedColor, size: normalizedSize }
@@ -3276,16 +3276,7 @@ app.post("/api/cart", async (req, res) => {
                 { size: "" },
               ],
             }
-          : {
-              userId: uid,
-              productId: pid,
-              $or: [
-                { variantId: variantId ? String(variantId) : { $in: [null, "", undefined] } },
-                { variantId: { $exists: false } },
-                { variantId: "" },
-                { variantId: null },
-              ],
-            };
+          : { userId: uid, productId: pid, variantId: variantId ? String(variantId) : undefined };
 
     const update = {
       $inc: { quantity: qty },
