@@ -15,6 +15,79 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+const META_PIXEL_IDS = String(
+  process.env.META_PIXEL_IDS || "1609839080107013,860862546423818",
+)
+  .split(",")
+  .map((id) => id.trim())
+  .filter(Boolean);
+const META_ACCESS_TOKEN = String(process.env.META_ACCESS_TOKEN || "").trim();
+const META_GRAPH_API_VERSION = String(
+  process.env.META_GRAPH_API_VERSION || "v20.0",
+).trim();
+
+// Server-side Meta Conversions API proxy. Keep the access token off the client.
+app.post("/api/meta/purchase", async (req, res) => {
+  try {
+    if (!META_PIXEL_IDS.length || !META_ACCESS_TOKEN) {
+      return res.status(503).json({ ok: false, error: "Meta CAPI is not configured" });
+    }
+
+    const body = req.body || {};
+    const value = Number(body?.custom_data?.value);
+    const eventId = String(body.event_id || "").trim();
+    if (!eventId || !Number.isFinite(value) || value <= 0) {
+      return res.status(400).json({ ok: false, error: "Purchase event_id and positive value are required" });
+    }
+
+    const event = {
+      event_name: "Purchase",
+      event_time: Number(body.event_time) || Math.floor(Date.now() / 1000),
+      event_id: eventId,
+      action_source: "website",
+      user_data: body.user_data || {},
+      custom_data: {
+        ...(body.custom_data || {}),
+        value,
+        currency: String(body?.custom_data?.currency || "INR").toUpperCase(),
+      },
+    };
+    const results = await Promise.all(
+      META_PIXEL_IDS.map(async (pixelId) => {
+        const graphResponse = await fetch(
+          `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${encodeURIComponent(pixelId)}/events?access_token=${encodeURIComponent(META_ACCESS_TOKEN)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ data: [event] }),
+          },
+        );
+        const result = await graphResponse.json().catch(() => ({}));
+        return { pixelId, ok: graphResponse.ok, result };
+      }),
+    );
+    const failed = results.filter((item) => !item.ok);
+    if (failed.length) {
+      console.error("Meta CAPI Purchase error", failed);
+    }
+    if (failed.length === results.length) {
+      return res.status(502).json({ ok: false, error: "Meta CAPI rejected the Purchase event" });
+    }
+
+    return res.json({
+      ok: true,
+      pixels: results.filter((item) => item.ok).map((item) => item.pixelId),
+      events_received: results.reduce(
+        (sum, item) => sum + (item.result.events_received || 0),
+        0,
+      ),
+    });
+  } catch (err) {
+    console.error("Meta CAPI Purchase request error", err);
+    return res.status(502).json({ ok: false, error: "Meta CAPI request failed" });
+  }
+});
+
 // Health/ping endpoint to confirm API hits
 app.get("/api/ping", (req, res) => {
   const name = (process.env.PING_NAME || "Akash Saini").trim();
