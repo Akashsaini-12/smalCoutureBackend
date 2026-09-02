@@ -63,7 +63,12 @@ app.post("/api/meta/purchase", async (req, res) => {
           },
         );
         const result = await graphResponse.json().catch(() => ({}));
-        return { pixelId, ok: graphResponse.ok, result };
+        return {
+          pixelId,
+          ok: graphResponse.ok,
+          result,
+          status: graphResponse.status,
+        };
       }),
     );
     const failed = results.filter((item) => !item.ok);
@@ -71,7 +76,21 @@ app.post("/api/meta/purchase", async (req, res) => {
       console.error("Meta CAPI Purchase error", failed);
     }
     if (failed.length === results.length) {
-      return res.status(502).json({ ok: false, error: "Meta CAPI rejected the Purchase event" });
+      return res.status(502).json({
+        ok: false,
+        error: "Meta CAPI rejected the Purchase event",
+        details: failed.map(({ pixelId, status, result }) => ({
+          pixelId,
+          status,
+          metaError: result?.error
+            ? {
+                code: result.error.code,
+                subcode: result.error.error_subcode,
+                message: result.error.message,
+              }
+            : null,
+        })),
+      });
     }
 
     return res.json({
