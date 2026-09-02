@@ -22,6 +22,10 @@ const META_PIXEL_IDS = String(
   .map((id) => id.trim())
   .filter(Boolean);
 const META_ACCESS_TOKEN = String(process.env.META_ACCESS_TOKEN || "").trim();
+const META_ACCESS_TOKEN_BY_PIXEL = {
+  "1609839080107013": META_ACCESS_TOKEN,
+  "860862546423818": String(process.env.META_ACCESS_TOKEN_2 || "").trim(),
+};
 const META_GRAPH_API_VERSION = String(
   process.env.META_GRAPH_API_VERSION || "v20.0",
 ).trim();
@@ -54,8 +58,22 @@ app.post("/api/meta/purchase", async (req, res) => {
     };
     const results = await Promise.all(
       META_PIXEL_IDS.map(async (pixelId) => {
+        const accessToken = Object.prototype.hasOwnProperty.call(
+          META_ACCESS_TOKEN_BY_PIXEL,
+          pixelId,
+        )
+          ? META_ACCESS_TOKEN_BY_PIXEL[pixelId]
+          : META_ACCESS_TOKEN;
+        if (!accessToken) {
+          return {
+            pixelId,
+            ok: false,
+            status: 503,
+            result: { error: { message: "No access token configured for this Pixel" } },
+          };
+        }
         const graphResponse = await fetch(
-          `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${encodeURIComponent(pixelId)}/events?access_token=${encodeURIComponent(META_ACCESS_TOKEN)}`,
+          `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${encodeURIComponent(pixelId)}/events?access_token=${encodeURIComponent(accessToken)}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
