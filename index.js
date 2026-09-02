@@ -30,6 +30,18 @@ const META_GRAPH_API_VERSION = String(
   process.env.META_GRAPH_API_VERSION || "v20.0",
 ).trim();
 
+function hashMetaUserValue(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized
+    ? crypto.createHash("sha256").update(normalized).digest("hex")
+    : "";
+}
+
+function normalizeMetaPhone(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  return digits.length === 10 ? `91${digits}` : digits;
+}
+
 // Server-side Meta Conversions API proxy. Keep the access token off the client.
 app.post("/api/meta/purchase", async (req, res) => {
   try {
@@ -49,7 +61,22 @@ app.post("/api/meta/purchase", async (req, res) => {
       event_time: Number(body.event_time) || Math.floor(Date.now() / 1000),
       event_id: eventId,
       action_source: "website",
-      user_data: body.user_data || {},
+      user_data: {
+        ...(body.user_data || {}),
+        ...(hashMetaUserValue(body.customer?.email)
+          ? { em: [hashMetaUserValue(body.customer.email)] }
+          : {}),
+        ...(hashMetaUserValue(normalizeMetaPhone(body.customer?.phone))
+          ? { ph: [hashMetaUserValue(normalizeMetaPhone(body.customer.phone))] }
+          : {}),
+        ...(hashMetaUserValue(body.customer?.zip)
+          ? { zp: [hashMetaUserValue(body.customer.zip) ] }
+          : {}),
+        client_ip_address:
+          req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
+          req.socket?.remoteAddress ||
+          undefined,
+      },
       custom_data: {
         ...(body.custom_data || {}),
         value,
