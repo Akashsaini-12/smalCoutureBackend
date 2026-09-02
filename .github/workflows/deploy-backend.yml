@@ -62,14 +62,19 @@ jobs:
           strip_components: 0
           overwrite: true
 
-      - name: Build image and restart backend-container
+      - name: Configure Meta secret and deploy
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          META_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN }}
         with:
           host: ${{ env.DEPLOY_HOST }}
           username: ${{ env.DEPLOY_USER }}
           key: ${{ env.DEPLOY_KEY }}
           port: ${{ env.DEPLOY_PORT }}
+          envs: META_ACCESS_TOKEN
           script: |
-            export APP_DIR="${{ env.DEPLOY_PATH }}"
-            export BUNDLE_DIR="$APP_DIR/deploy-bundle"
-            bash "$BUNDLE_DIR/deploy.sh"
+            APP_DIR="${{ env.DEPLOY_PATH }}"
+            touch "$APP_DIR/.env"
+            sed -i '/^META_ACCESS_TOKEN=/d' "$APP_DIR/.env"
+            printf 'META_ACCESS_TOKEN=%s\n' "$META_ACCESS_TOKEN" >> "$APP_DIR/.env"
+            bash "$APP_DIR/deploy-bundle/deploy.sh"
