@@ -557,8 +557,9 @@ const userSchema = new mongoose.Schema(
   {
     firstName:   { type: String, required: true, trim: true },
     lastName:    { type: String, trim: true, default: "" },
-    email:       { type: String, required: true, unique: true, lowercase: true, trim: true, index: true },
+    email:       { type: String, unique: true, sparse: true, lowercase: true, trim: true },
     phone:       { type: String, trim: true, default: "" },
+    phoneNormalized: { type: String, unique: true, sparse: true, index: true },
     avatarUrl:   { type: String, trim: true, default: "" },
     passwordHash:{ type: String, required: true },
     // role: 0 = admin, 1 = user
@@ -571,6 +572,10 @@ const userSchema = new mongoose.Schema(
 );
 
 const User = mongoose.model("User", userSchema, "users");
+
+function normalizePhone(phone) {
+  return String(phone || "").replace(/\D/g, "");
+}
 
 // ─── Seed admin on startup ───────────────────────────────────────────────────
 async function seedAdmin() {
@@ -597,33 +602,58 @@ async function seedAdmin() {
 // ─── Auth Routes ─────────────────────────────────────────────────────────────
 
 // POST /api/auth/register
-// Body: { firstName, lastName?, email, phone?, password }
+// Body: { firstName, lastName?, email?, phone, password }
 app.post("/api/auth/register", async (req, res) => {
   try {
     const { firstName, lastName, email, phone, password } = req.body || {};
-    if (!firstName || !email || !password) {
-      return res.status(400).json({ error: "firstName, email and password are required" });
+    const normalizedFirstName = String(firstName || "").trim();
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    const normalizedPhone = normalizePhone(phone);
+    const normalizedPassword = String(password || "");
+
+    if (!normalizedFirstName || !normalizedPassword) {
+      return res.status(400).json({ error: "firstName and password are required" });
     }
-    if (password.length < 6) {
+    if (!/^\d{10}$/.test(normalizedPhone)) {
+      return res.status(400).json({ error: "A valid 10-digit phone number is required" });
+    }
+    if (normalizedPassword.length < 6) {
       return res.status(400).json({ error: "Password must be at least 6 characters" });
     }
 
-    const existing = await User.findOne({ email: String(email).toLowerCase().trim() });
-    if (existing) return res.status(409).json({ error: "Email already registered" });
+    if (normalizedEmail) {
+      const existingEmail = await User.findOne({ email: normalizedEmail }).lean();
+      if (existingEmail) return res.status(409).json({ error: "Email already registered" });
+    }
 
-    const hash = await bcrypt.hash(String(password), 10);
+    const usersWithPhones = await User.find({
+      phone: { $exists: true, $nin: ["", null] },
+    }).select("phone phoneNormalized").lean();
+    const duplicatePhone = usersWithPhones.some(
+      (user) =>
+        user.phoneNormalized === normalizedPhone ||
+        normalizePhone(user.phone) === normalizedPhone,
+    );
+    if (duplicatePhone) {
+      return res.status(409).json({ error: "Mobile number already registered" });
+    }
 
-    const user = await User.create({
-      firstName: String(firstName).trim(),
+    const hash = await bcrypt.hash(normalizedPassword, 10);
+
+    const userPayload = {
+      firstName: normalizedFirstName,
       lastName: lastName ? String(lastName).trim() : "",
-      email: String(email).toLowerCase().trim(),
-      phone: phone ? String(phone).trim() : "",
+      phone: normalizedPhone,
+      phoneNormalized: normalizedPhone,
       passwordHash: hash,
       role: 1,
       isVerified: true,
       otp: "",
       otpExpiry: undefined,
-    });
+    };
+    if (normalizedEmail) userPayload.email = normalizedEmail;
+
+    const user = await User.create(userPayload);
 
     const token = jwt.sign(
       { userId: String(user._id), email: user.email, role: user.role },
@@ -647,7 +677,12 @@ app.post("/api/auth/register", async (req, res) => {
     });
   } catch (err) {
     if (err && err.code === 11000) {
-      return res.status(409).json({ error: "Email already registered" });
+      const duplicateField = Object.keys(err.keyPattern || {})[0];
+      return res.status(409).json({
+        error: duplicateField === "phoneNormalized"
+          ? "Mobile number already registered"
+          : "Email already registered",
+      });
     }
     console.error("Register error:", err);
     return res.status(500).json({ error: "Internal server error" });
@@ -6504,6 +6539,7 @@ async function start() {
     try {
       await mongoose.connect(uri);
       console.log("MongoDB connected");
+      await User.syncIndexes();
       await seedAdmin();
       // await seedShirtSubcategories();
       ensureUploadFilesAsync({
