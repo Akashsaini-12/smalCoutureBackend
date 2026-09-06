@@ -905,6 +905,37 @@ app.get("/api/admin/users", authMiddleware, adminMiddleware, async (req, res) =>
   }
 });
 
+// Admin: remove only the user account; orders are intentionally preserved.
+app.delete("/api/admin/users/:userId", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const userId = String(req.params.userId || "").trim();
+    const adminIdentifier = String(req.body?.emailOrPhone || "").trim();
+    const adminPassword = String(req.body?.password || "");
+    if (!mongoose.isValidObjectId(userId)) return res.status(400).json({ error: "A valid userId is required" });
+    if (String(req.user.userId) === userId) return res.status(400).json({ error: "The active admin account cannot be removed" });
+    if (!adminIdentifier || !adminPassword) return res.status(400).json({ error: "Admin ID and password are required" });
+    const normalizedIdentifier = adminIdentifier.toLowerCase();
+    const phoneIdentifier = adminIdentifier.replace(/\D/g, "");
+    const admin = await User.findOne({
+      role: 0,
+      $or: [
+        { email: normalizedIdentifier },
+        { phone: adminIdentifier },
+        ...(phoneIdentifier ? [{ phone: phoneIdentifier }] : []),
+      ],
+    });
+    if (!admin || !(await bcrypt.compare(adminPassword, admin.passwordHash))) {
+      return res.status(401).json({ error: "Invalid admin credentials" });
+    }
+    const deleted = await User.findByIdAndDelete(userId);
+    if (!deleted) return res.status(404).json({ error: "User not found" });
+    return res.json({ ok: true, userId });
+  } catch (err) {
+    console.error("Admin delete user error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 const MIXMATCH_FALLBACK_LOOKS = [
   {
     id: "look-1",
@@ -4017,6 +4048,36 @@ app.get("/api/admin/orders", authMiddleware, adminMiddleware, async (req, res) =
     return res.json({ items });
   } catch (err) {
     console.error("Admin list orders error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Admin: permanently delete an order record.
+app.delete("/api/admin/orders/:id", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || "").trim();
+    const adminIdentifier = String(req.body?.emailOrPhone || "").trim();
+    const adminPassword = String(req.body?.password || "");
+    if (!mongoose.isValidObjectId(id)) return res.status(400).json({ error: "A valid order id is required" });
+    if (!adminIdentifier || !adminPassword) return res.status(400).json({ error: "Admin ID and password are required" });
+    const normalizedIdentifier = adminIdentifier.toLowerCase();
+    const phoneIdentifier = adminIdentifier.replace(/\D/g, "");
+    const admin = await User.findOne({
+      role: 0,
+      $or: [
+        { email: normalizedIdentifier },
+        { phone: adminIdentifier },
+        ...(phoneIdentifier ? [{ phone: phoneIdentifier }] : []),
+      ],
+    });
+    if (!admin || !(await bcrypt.compare(adminPassword, admin.passwordHash))) {
+      return res.status(401).json({ error: "Invalid admin credentials" });
+    }
+    const deleted = await Order.findByIdAndDelete(id);
+    if (!deleted) return res.status(404).json({ error: "Order not found" });
+    return res.json({ ok: true, orderId: id });
+  } catch (err) {
+    console.error("Admin delete order error:", err);
     return res.status(500).json({ error: "Internal server error" });
   }
 });
