@@ -717,6 +717,30 @@ app.post("/api/auth/login", async (req, res) => {
     const match = await bcrypt.compare(String(password), user.passwordHash);
     if (!match) return res.status(401).json({ error: "Invalid credentials" });
 
+    const orderPhone = normalizePhone(user.phoneNormalized || user.phone);
+    if (orderPhone) {
+      await Order.updateMany(
+        {
+          $and: [
+            {
+              $or: [
+                { userId: { $exists: false } },
+                { userId: null },
+                { userId: "" },
+              ],
+            },
+            {
+              $or: [
+                { "customer.phone": orderPhone },
+                { "shippingAddress.phone": orderPhone },
+              ],
+            },
+          ],
+        },
+        { $set: { userId: String(user._id) } },
+      );
+    }
+
     if (!user.isVerified) {
       user.isVerified = true;
       user.otp = "";
@@ -2876,7 +2900,13 @@ const SiteSetting = mongoose.model("SiteSetting", siteSettingSchema, "site_setti
 // Order schema/model (created during checkout)
 const orderSchema = new mongoose.Schema(
   {
-    userId: { type: String, required: true, index: true },
+    userId: { type: String, index: true },
+    customer: {
+      firstName: { type: String, trim: true },
+      lastName: { type: String, trim: true },
+      email: { type: String, trim: true, lowercase: true },
+      phone: { type: String, trim: true },
+    },
     items: [
       {
         cartItemId: { type: String },
@@ -2901,6 +2931,7 @@ const orderSchema = new mongoose.Schema(
     shippingAddress: {
       name: { type: String },
       phone: { type: String },
+      alternatePhone: { type: String },
       address1: { type: String },
       city: { type: String },
       state: { type: String },
@@ -3281,15 +3312,24 @@ app.post("/api/stock/check", async (req, res) => {
 
 // API: validate cart quantities vs stock (before checkout)
 // POST /api/cart/validate-stock
-// Body: { userId }
+// Body: { userId } or { items } for a guest cart
 app.post("/api/cart/validate-stock", async (req, res) => {
   try {
-    const { userId } = req.body || {};
-    if (!userId) return res.status(400).json({ error: "userId is required" });
+    const { userId, items: submittedItems } = req.body || {};
+    if (!userId && !Array.isArray(submittedItems)) {
+      return res.status(400).json({ error: "userId or items are required" });
+    }
 
-    const items = await CartItem.find({ userId: String(userId) })
-      .sort({ createdAt: -1 })
-      .lean();
+    const items = userId
+      ? await CartItem.find({ userId: String(userId) })
+          .sort({ createdAt: -1 })
+          .lean()
+      : submittedItems.map((item, index) => ({
+          ...item,
+          _id: String(item?._id || index),
+          productId: String(item?.productId || ""),
+          quantity: Number(item?.quantity || 1),
+        }));
 
     const withStock = await attachMaxStockToCartItems(items);
     const results = (withStock || []).map((it) => {
@@ -4023,13 +4063,19 @@ app.post("/api/coupons/list", async (req, res) => {
   }
 });
 
-// Orders: list
+// Orders: customers may only list their own orders; admins may list a selected user.
 // POST /api/orders/list Body: { userId }
-app.post("/api/orders/list", async (req, res) => {
+app.post("/api/orders/list", authMiddleware, async (req, res) => {
   try {
-    const { userId } = req.body || {};
+    const requestedUserId = String(req.body?.userId || "").trim();
+    const authenticatedUserId = String(req.user?.userId || "").trim();
+    const isAdmin = req.user?.role === 0;
+    if (!isAdmin && requestedUserId && requestedUserId !== authenticatedUserId) {
+      return res.status(403).json({ error: "You can only view your own orders" });
+    }
+    const userId = isAdmin ? requestedUserId : authenticatedUserId;
     if (!userId) return res.status(400).json({ error: "userId is required" });
-    const items = await Order.find({ userId: String(userId) })
+    const items = await Order.find({ userId })
       .sort({ createdAt: -1 })
       .lean();
     return res.json({ items });
@@ -4244,19 +4290,37 @@ app.post("/api/admin/coupons/delete", async (req, res) => {
 app.post("/api/checkout", async (req, res) => {
   const session = await mongoose.startSession();
   try {
-    const { userId, paymentMethod = "cod", note, couponCode, shippingAddress, payment } =
+    const { userId, paymentMethod = "cod", note, couponCode, shippingAddress, payment, customer, items: submittedItems } =
       req.body || {};
-    if (!userId) {
-      return res.status(400).json({ error: "userId is required" });
+    const uid = String(userId || "").trim();
+    if (!uid) {
+      const guestPhone = String(customer?.phone || "").replace(/\D/g, "");
+      const guestEmail = String(customer?.email || "").trim();
+      if (!String(customer?.firstName || "").trim() || !/^\d{10}$/.test(guestPhone)) {
+        return res.status(400).json({ error: "A first name and valid 10-digit phone are required" });
+      }
+      if (guestEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(guestEmail)) {
+        return res.status(400).json({ error: "A valid email address is required" });
+      }
+      if (
+        !Array.isArray(submittedItems) ||
+        !submittedItems.length ||
+        !String(shippingAddress?.address1 || "").trim() ||
+        !String(shippingAddress?.city || "").trim() ||
+        !String(shippingAddress?.pincode || "").trim()
+      ) {
+        return res.status(400).json({ error: "Customer, delivery address, and cart items are required" });
+      }
     }
 
     session.startTransaction();
 
-    const uid = String(userId);
-    const cartItems = await CartItem.find({ userId: uid })
-      .sort({ createdAt: -1 })
-      .session(session)
-      .lean();
+    const cartItems = uid
+      ? await CartItem.find({ userId: uid })
+          .sort({ createdAt: -1 })
+          .session(session)
+          .lean()
+      : submittedItems;
 
     if (!cartItems.length) {
       await session.abortTransaction();
@@ -4264,15 +4328,15 @@ app.post("/api/checkout", async (req, res) => {
     }
 
     const items = cartItems.map((it) => ({
-      cartItemId: String(it._id),
+      ...(it._id ? { cartItemId: String(it._id) } : {}),
       productId: String(it.productId),
       variantId: it.variantId ? String(it.variantId) : undefined,
-      name: it.name,
+      name: String(it.name || it.title || "Product"),
       slug: it.slug,
-      price: Number(it.price || 0),
+      price: Number(String(it.price || "0").replace(/[^\d.]/g, "")) || 0,
       color: it.color,
       size: it.size,
-      quantity: Number(it.quantity || 1),
+      quantity: Math.max(1, Number(it.quantity) || 1),
       image: it.image,
     }));
 
@@ -4294,7 +4358,9 @@ app.post("/api/checkout", async (req, res) => {
     let couponFinal = couponCode ? String(couponCode).trim().toUpperCase() : "";
     if (couponFinal) {
       // one-time coupon per user check (transactional)
-      const alreadyUsed = await CouponRedemption.exists({ userId: uid, code: couponFinal }).session(session);
+      const alreadyUsed = uid
+        ? await CouponRedemption.exists({ userId: uid, code: couponFinal }).session(session)
+        : false;
       if (alreadyUsed) {
         throw new Error("Coupon already used");
       }
@@ -4335,7 +4401,13 @@ app.post("/api/checkout", async (req, res) => {
     const [orderDoc] = await Order.create(
       [
         {
-          userId: uid,
+          ...(uid ? { userId: uid } : {}),
+          customer: {
+            firstName: String(customer?.firstName || "").trim(),
+            lastName: String(customer?.lastName || "").trim(),
+            email: String(customer?.email || "").trim().toLowerCase(),
+            phone: String(customer?.phone || "").replace(/\D/g, ""),
+          },
           items,
           subtotal,
           shipping,
@@ -4365,7 +4437,7 @@ app.post("/api/checkout", async (req, res) => {
     );
 
     // 3.5) Mark coupon used for this user (only if applied)
-    if (couponFinal && discount > 0) {
+    if (uid && couponFinal && discount > 0) {
       await CouponRedemption.create(
         [
           {
@@ -4379,7 +4451,7 @@ app.post("/api/checkout", async (req, res) => {
       );
     }
 
-    await CartItem.deleteMany({ userId: uid }).session(session);
+    if (uid) await CartItem.deleteMany({ userId: uid }).session(session);
 
     await session.commitTransaction();
     return res.status(201).json({ order: orderDoc.toObject() });
@@ -4420,14 +4492,31 @@ app.post("/api/checkout/buy-now", async (req, res) => {
       shippingAddress,
       payment,
       item,
+      customer,
     } = req.body || {};
 
-    if (!userId) return res.status(400).json({ error: "userId is required" });
     if (!item || typeof item !== "object") {
       return res.status(400).json({ error: "item is required" });
     }
 
-    const uid = String(userId);
+    const uid = String(userId || "").trim();
+    if (!uid) {
+      const guestPhone = String(customer?.phone || "").replace(/\D/g, "");
+      const guestEmail = String(customer?.email || "").trim();
+      if (!String(customer?.firstName || "").trim() || !/^\d{10}$/.test(guestPhone)) {
+        return res.status(400).json({ error: "A first name and valid 10-digit phone are required" });
+      }
+      if (guestEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(guestEmail)) {
+        return res.status(400).json({ error: "A valid email address is required" });
+      }
+      if (
+        !String(shippingAddress?.address1 || "").trim() ||
+        !String(shippingAddress?.city || "").trim() ||
+        !String(shippingAddress?.pincode || "").trim()
+      ) {
+        return res.status(400).json({ error: "A delivery address is required" });
+      }
+    }
     const productId = String(item.productId || "").trim();
     const color = item.color != null ? String(item.color).trim() : "";
     const size = item.size != null ? String(item.size).trim() : "";
@@ -4475,7 +4564,9 @@ app.post("/api/checkout/buy-now", async (req, res) => {
     let discount = 0;
     let couponFinal = couponCode ? String(couponCode).trim().toUpperCase() : "";
     if (couponFinal) {
-      const alreadyUsed = await CouponRedemption.exists({ userId: uid, code: couponFinal }).session(session);
+      const alreadyUsed = uid
+        ? await CouponRedemption.exists({ userId: uid, code: couponFinal }).session(session)
+        : false;
       if (alreadyUsed) throw new Error("Coupon already used");
 
       const coupon = await Coupon.findOne({ code: couponFinal, isActive: true })
@@ -4515,7 +4606,13 @@ app.post("/api/checkout/buy-now", async (req, res) => {
     const [orderDoc] = await Order.create(
       [
         {
-          userId: uid,
+          ...(uid ? { userId: uid } : {}),
+          customer: {
+            firstName: String(customer?.firstName || "").trim(),
+            lastName: String(customer?.lastName || "").trim(),
+            email: String(customer?.email || "").trim().toLowerCase(),
+            phone: String(customer?.phone || "").replace(/\D/g, ""),
+          },
           items,
           subtotal,
           shipping,
@@ -4544,7 +4641,7 @@ app.post("/api/checkout/buy-now", async (req, res) => {
       { session },
     );
 
-    if (couponFinal && discount > 0) {
+    if (uid && couponFinal && discount > 0) {
       await CouponRedemption.create(
         [
           {
